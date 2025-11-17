@@ -1,0 +1,17 @@
+# Real-time Screen Translator - Dependencies
+
+# GUI Framework (tkinter is included with Python, no need to install)
+# Screen Capture
+mss>=9.0.1
+Pillow>=10.0.0
+
+# Image Processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# OCR
+pytesseract>=0.3.10
+
+# Translation
+deep-translator>=1.11.4
+

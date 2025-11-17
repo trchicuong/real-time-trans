@@ -1,0 +1,69 @@
+═══════════════════════════════════════════════════════════════════════════════
+    HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
+    Tác giả: trchicuong
+═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+1. CÀI ĐẶT
+═══════════════════════════════════════════════════════════════════════════════
+
+BƯỚC 1: Cài đặt Tesseract OCR
+─────────────────────────────
+• Windows:
+  - Tải từ: https://github.com/UB-Mannheim/tesseract/wiki
+  - Chạy file cài đặt và làm theo hướng dẫn
+  - Ghi nhớ thư mục cài đặt (thường là C:\Program Files\Tesseract-OCR)
+
+• macOS:
+  - Mở Terminal và chạy: brew install tesseract
+
+• Linux:
+  - Ubuntu/Debian: sudo apt-get install tesseract-ocr
+  - Fedora: sudo dnf install tesseract
+
+BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (nếu cần)
+───────────────────────────────────────────
+Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm dữ liệu:
+• Windows: Tải từ https://github.com/tesseract-ocr/tessdata
+          Đặt file .traineddata vào thư mục tessdata của Tesseract
+
+BƯỚC 3: Chạy chương trình
+─────────────────────────
+• Nếu có file .exe: Chạy trực tiếp file RealTimeScreenTranslator.exe
+• Nếu chạy từ mã nguồn: Chạy file translator.py
+
+═══════════════════════════════════════════════════════════════════════════════
+2. BẮT ĐẦU SỬ DỤNG
+═══════════════════════════════════════════════════════════════════════════════
+
+BƯỚC 1: Chọn vùng chụp màn hình
+────────────────────────────────
+1. Mở ứng dụng của bạn
+2. Trong cửa sổ công cụ dịch, chọn tab "Cài Đặt"
+3. Nhấn nút "Chọn Vùng"
+4. Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
+5. Dùng chuột kéo để chọn vùng hộp thoại trong ứng dụng
+6. Thả chuột để xác nhận
+
+⚠️ LƯU Ý: Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
+
+BƯỚC 2: Cấu hình cài đặt cơ bản
+─────────────────────────────────
+1. Chọn ngôn ngữ nguồn (ngôn ngữ trong ứng dụng):
+   - Tiếng Anh: eng
+   - Tiếng Nhật: jpn
+   - Tiếng Hàn: kor
+   - Tiếng Trung: chi_sim hoặc chi_tra
+   - Và các ngôn ngữ khác...
+
+2. Điều chỉnh khoảng thời gian cập nhật:
+   - Giá trị thấp (50-200ms): Dịch nhanh hơn nhưng tốn CPU
+   - Giá trị cao (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
+   - Khuyến nghị: 200-300ms
+
+BƯỚC 3: Bắt đầu dịch
+─────────────────────
+1. Chọn tab "Điều Khiển"
+2. Nhấn nút "Bắt Đầu Dịch"
+3. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
+4. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
