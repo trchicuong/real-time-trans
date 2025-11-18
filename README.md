@@ -1,11 +1,21 @@
 # 🖥️ Real-Time Screen Translator - Việt Nam
 
-Tool Python mã nguồn mở giúp dịch văn bản thời gian thực trên màn hình bằng cách chụp vùng màn hình, nhận dạng văn bản (OCR), và dịch sang tiếng Việt.
+Tool Python mã nguồn mở giúp dịch văn bản thời gian thực trên màn hình bằng cách chụp vùng màn hình, nhận dạng văn bản (OCR), và dịch sang nhiều ngôn ngữ. Hỗ trợ đa luồng, nhiều engine OCR và dịch vụ dịch thuật.
+
+## ✨ Tính Năng Nổi Bật
+
+- 🚀 **Đa luồng xử lý**: Chụp màn hình, OCR và dịch thuật song song để tối ưu tốc độ
+- 🔄 **Hỗ trợ 2 Engine OCR**: Tesseract (mặc định) và EasyOCR (tùy chọn, chính xác hơn)
+- 🌐 **Hỗ trợ 2 Dịch vụ**: Google Translate (miễn phí) và DeepL (chất lượng cao)
+- 🎨 **Tùy chỉnh giao diện**: Preset nhanh hoặc tùy chỉnh chi tiết
+- 📍 **Tự động lưu cài đặt**: Vị trí, kích thước, và tất cả cài đặt
+- 🔒 **Khóa màn hình dịch**: Ngăn di chuyển nhầm khi chơi game
+- 🌍 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ nguồn và đích
 
 ## Yêu Cầu
 
 - Python 3.7 trở lên
-- Tesseract OCR đã cài đặt trên máy
+- Tesseract OCR đã cài đặt trên máy (hoặc EasyOCR nếu muốn dùng)
 
 ### Cài Đặt Tesseract OCR
 
@@ -61,8 +71,20 @@ brew install tesseract-lang  # macOS (bao gồm nhiều ngôn ngữ)
 pip install -r requirements.txt
 ```
 
-3. (Tùy chọn) Nếu Tesseract không có trong PATH, bạn có thể cần cấu hình:
-   - Sử dụng nút "Duyệt" trong giao diện để chọn đường dẫn Tesseract
+3. (Tùy chọn) Cài đặt EasyOCR để sử dụng engine OCR thay thế:
+
+```bash
+pip install easyocr
+```
+
+4. (Tùy chọn) Cài đặt DeepL API để sử dụng dịch vụ dịch thuật chất lượng cao:
+
+```bash
+pip install deepl
+```
+
+5. (Tùy chọn) Nếu Tesseract không có trong PATH, bạn có thể cần cấu hình:
+   - Sử dụng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn Tesseract
    - Hoặc chỉnh sửa `translator.py` và thêm dòng sau phần import:
    ```python
    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -86,8 +108,19 @@ python translator.py
 
 3. **Cấu Hình Cài Đặt** (tùy chọn):
 
-   - Chọn ngôn ngữ nguồn của văn bản ứng dụng
-   - Điều chỉnh khoảng thời gian cập nhật (thấp hơn = cập nhật thường xuyên hơn, nhưng tốn CPU hơn)
+   - **Ngôn ngữ nguồn**: Chọn ngôn ngữ của văn bản trong ứng dụng
+   - **Khoảng thời gian cập nhật**: Điều chỉnh tốc độ cập nhật (50-5000ms)
+     - Giá trị nhỏ hơn = cập nhật nhanh hơn nhưng tốn CPU hơn
+     - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
+   - **Engine OCR**: Chọn Tesseract hoặc EasyOCR
+     - Tesseract: Mặc định, cần cài đặt Tesseract OCR
+     - EasyOCR: Chính xác hơn cho một số ngôn ngữ, cần cài: `pip install easyocr`
+   - **Ngôn ngữ đích**: Chọn ngôn ngữ muốn dịch sang
+   - **Dịch vụ dịch thuật**: Chọn Google Translate hoặc DeepL
+     - Google Translate: Miễn phí, không cần API key
+     - DeepL: Chất lượng tốt hơn, cần API key (có phí)
+       - Lấy API key tại: https://www.deepl.com/pro-api
+       - Cần cài: `pip install deepl`
 
 4. **Tùy Chỉnh Giao Diện Dịch** (tùy chọn):
 
@@ -115,10 +148,13 @@ python translator.py
 
 Công cụ tự động lưu cài đặt của bạn vào `config.json`:
 
-- Tọa độ vùng chụp
-- Ngôn ngữ nguồn
+- Tọa độ vùng chụp màn hình
+- Ngôn ngữ nguồn và đích
+- Engine OCR (Tesseract hoặc EasyOCR)
+- Dịch vụ dịch thuật (Google hoặc DeepL)
+- DeepL API Key (nếu sử dụng)
 - Khoảng thời gian cập nhật
-- Tất cả cài đặt tùy chỉnh giao diện
+- Tất cả cài đặt tùy chỉnh giao diện (font, màu sắc, kích thước, v.v.)
 - Vị trí và kích thước màn hình dịch
 - Trạng thái khóa màn hình dịch
 
@@ -159,7 +195,7 @@ Script này sẽ:
 - Tự động build executable nếu chưa có
 - Tạo file zip với tên: `RealTimeTrans-[version]-[timestampcode].zip`
 - Bao gồm: `RealTimeScreenTranslator.exe` và `HUONG_DAN.txt`
-- Ví dụ: `RealTimeTrans-v1.0.0-143052.zip`
+- Ví dụ: `RealTimeTrans-1.0.1-143052.zip`
 
 **Lưu ý:**
 
@@ -251,15 +287,35 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
 
 ### Ngôn Ngữ Đích:
 
-- Tiếng Việt (vi) - cố định
+- Tiếng Việt (vi)
+- Tiếng Anh (en)
+- Tiếng Nhật (ja)
+- Tiếng Hàn (ko)
+- Tiếng Trung (zh)
+- Tiếng Pháp (fr)
+- Tiếng Đức (de)
+- Tiếng Tây Ban Nha (es)
 
 ## Chi Tiết Kỹ Thuật
 
 - **Chụp Màn Hình**: Sử dụng thư viện `mss` để chụp màn hình nhanh, hiệu quả
-- **Công Cụ OCR**: Tesseract OCR qua `pytesseract`
-- **Xử Lý Hình Ảnh**: OpenCV để tiền xử lý hình ảnh (thresholding, chuyển đổi grayscale)
-- **Dịch**: Google Translate API qua `deep-translator`
+- **Công Cụ OCR**: 
+  - Tesseract OCR qua `pytesseract` (mặc định)
+  - EasyOCR (tùy chọn, chính xác hơn cho một số ngôn ngữ)
+- **Xử Lý Hình Ảnh**: OpenCV để tiền xử lý hình ảnh (adaptive thresholding, binary thresholding, grayscale conversion, intelligent scaling)
+- **Dịch Thuật**: 
+  - Google Translate API qua `deep-translator` (miễn phí)
+  - DeepL API (chất lượng cao, có phí)
 - **Giao Diện**: Tkinter (đã có sẵn trong Python)
+- **Kiến Trúc**: Đa luồng với 3 threads riêng biệt:
+  - Thread chụp màn hình
+  - Thread xử lý OCR
+  - Thread xử lý dịch thuật
+- **Tối Ưu Hiệu Suất**: 
+  - Xử lý song song với ThreadPoolExecutor
+  - Tự động điều chỉnh tốc độ dựa trên tải
+  - Cache dịch thuật để giảm API calls
+  - Image hashing để bỏ qua frame trùng lặp
 
 ## 📁 Cấu Trúc Dự Án
 

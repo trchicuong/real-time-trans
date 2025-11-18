@@ -11,7 +11,9 @@ numpy>=1.24.0
 
 # OCR
 pytesseract>=0.3.10
+easyocr>=1.7.0
 
 # Translation
 deep-translator>=1.11.4
+deepl>=1.12.0
 

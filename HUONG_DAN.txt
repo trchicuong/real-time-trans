@@ -7,12 +7,16 @@
 1. CÀI ĐẶT
 ═══════════════════════════════════════════════════════════════════════════════
 
-BƯỚC 1: Cài đặt Tesseract OCR
-─────────────────────────────
+BƯỚC 1: Cài đặt Tesseract OCR (BẮT BUỘC)
+─────────────────────────────────────────
+Công cụ cần Tesseract OCR để đọc văn bản trên màn hình.
+
 • Windows:
-  - Tải từ: https://github.com/UB-Mannheim/tesseract/wiki
+  - Tải Tesseract OCR từ: https://github.com/UB-Mannheim/tesseract/wiki
   - Chạy file cài đặt và làm theo hướng dẫn
   - Ghi nhớ thư mục cài đặt (thường là C:\Program Files\Tesseract-OCR)
+  - Khi chạy công cụ lần đầu, nếu không tự động tìm thấy Tesseract,
+    bạn sẽ cần dùng nút "Duyệt" để chọn đường dẫn Tesseract
 
 • macOS:
   - Mở Terminal và chạy: brew install tesseract
@@ -21,16 +25,23 @@ BƯỚC 1: Cài đặt Tesseract OCR
   - Ubuntu/Debian: sudo apt-get install tesseract-ocr
   - Fedora: sudo dnf install tesseract
 
-BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (nếu cần)
+BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (Nếu cần)
 ───────────────────────────────────────────
-Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm dữ liệu:
-• Windows: Tải từ https://github.com/tesseract-ocr/tessdata
-          Đặt file .traineddata vào thư mục tessdata của Tesseract
+Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm:
 
-BƯỚC 3: Chạy chương trình
-─────────────────────────
-• Nếu có file .exe: Chạy trực tiếp file RealTimeScreenTranslator.exe
-• Nếu chạy từ mã nguồn: Chạy file translator.py
+• Windows: 
+  - Tải từ: https://github.com/tesseract-ocr/tessdata
+  - Đặt các file .traineddata vào thư mục tessdata của Tesseract
+  - Thư mục tessdata thường ở: C:\Program Files\Tesseract-OCR\tessdata\
+
+• macOS/Linux:
+  - Ubuntu/Debian: sudo apt-get install tesseract-ocr-jpn  (ví dụ tiếng Nhật)
+  - macOS: brew install tesseract-lang  (bao gồm nhiều ngôn ngữ)
+
+BƯỚC 3: Chạy công cụ
+─────────────────────
+• Chạy trực tiếp file RealTimeScreenTranslator.exe
+• Cửa sổ công cụ sẽ hiện ra
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. BẮT ĐẦU SỬ DỤNG
@@ -38,32 +49,232 @@ BƯỚC 3: Chạy chương trình
 
 BƯỚC 1: Chọn vùng chụp màn hình
 ────────────────────────────────
-1. Mở ứng dụng của bạn
+1. Mở ứng dụng của bạn (game, ứng dụng, v.v.) mà bạn muốn dịch
 2. Trong cửa sổ công cụ dịch, chọn tab "Cài Đặt"
 3. Nhấn nút "Chọn Vùng"
 4. Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
 5. Dùng chuột kéo để chọn vùng hộp thoại trong ứng dụng
 6. Thả chuột để xác nhận
 
-⚠️ LƯU Ý: Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
+⚠️ LƯU Ý QUAN TRỌNG:
+   - Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
+   - Chọn vùng nhỏ hơn = dịch nhanh hơn
+   - Tránh chọn vùng quá lớn hoặc bao gồm nhiều phần không cần thiết
 
-BƯỚC 2: Cấu hình cài đặt cơ bản
-─────────────────────────────────
-1. Chọn ngôn ngữ nguồn (ngôn ngữ trong ứng dụng):
-   - Tiếng Anh: eng
-   - Tiếng Nhật: jpn
-   - Tiếng Hàn: kor
-   - Tiếng Trung: chi_sim hoặc chi_tra
-   - Và các ngôn ngữ khác...
+BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
+──────────────────────────────────────────
+1. NGÔN NGỮ NGUỒN:
+   - Chọn ngôn ngữ của văn bản trong ứng dụng
+   - Ví dụ: Tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
 
-2. Điều chỉnh khoảng thời gian cập nhật:
-   - Giá trị thấp (50-200ms): Dịch nhanh hơn nhưng tốn CPU
-   - Giá trị cao (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
-   - Khuyến nghị: 200-300ms
+2. KHOẢNG THỜI GIAN CẬP NHẬT:
+   - Giá trị nhỏ (50-200ms): Dịch nhanh hơn nhưng tốn CPU hơn
+   - Giá trị lớn (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
+   - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
+   - Lưu ý: Preset sẽ tự động cập nhật giá trị này
 
-BƯỚC 3: Bắt đầu dịch
-─────────────────────
-1. Chọn tab "Điều Khiển"
-2. Nhấn nút "Bắt Đầu Dịch"
-3. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
-4. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
+3. ENGINE OCR:
+   - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
+   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ
+   - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
+
+4. NGÔN NGỮ ĐÍCH:
+   - Chọn ngôn ngữ muốn dịch sang
+   - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+
+5. DỊCH VỤ DỊCH THUẬT:
+   - Google Translate: Miễn phí, không cần API key
+   - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
+     - Nếu chọn DeepL, nhập API Key vào ô tương ứng
+     - Lấy API key tại: https://www.deepl.com/pro-api
+
+BƯỚC 3: Tùy chỉnh giao diện dịch (Tab "Giao Diện Dịch")
+─────────────────────────────────────────────────────────
+1. CẤU HÌNH NHANH (PRESET) - Khuyến nghị sử dụng:
+   - "Tối Ưu Tốc Độ": Phù hợp game có hội thoại xuất hiện nhanh
+   - "Cân Bằng": Phù hợp hầu hết game và ứng dụng
+   - "Tối Ưu Chất Lượng": Phù hợp khi cần đọc kỹ, chất lượng cao
+   - "Mặc Định": Cài đặt mặc định
+   - ⚠️ Sau khi chọn preset, nhấn "Áp Dụng" để áp dụng cài đặt
+
+2. TÙY CHỈNH THỦ CÔNG:
+   Bạn có thể tùy chỉnh:
+   - Cỡ chữ, phông chữ, độ đậm
+   - Màu chữ, màu nền, màu văn bản gốc
+   - Độ trong suốt
+   - Kích thước màn hình dịch
+   - Căn lề, khoảng cách dòng
+   - Viền, bóng chữ
+   - Hiển thị văn bản gốc
+
+3. NÚT ĐIỀU KHIỂN:
+   - "Áp Dụng": Áp dụng tất cả cài đặt đã thay đổi
+   - "Đặt Lại Tất Cả": Reset về mặc định (bao gồm vị trí màn hình dịch)
+
+BƯỚC 4: Bắt đầu dịch (Tab "Điều Khiển")
+─────────────────────────────────────────
+1. Nhấn nút "Bắt Đầu Dịch"
+2. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
+3. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
+4. Công cụ sẽ tự động xử lý nhiều hộp thoại liên tiếp
+
+BƯỚC 5: Sử dụng màn hình dịch
+──────────────────────────────
+• DI CHUYỂN: Kéo thả màn hình dịch đến vị trí mong muốn
+• THAY ĐỔI KÍCH THƯỚC: Kéo các cạnh hoặc góc để thay đổi kích thước
+• CUỘN VĂN BẢN: Cuộn lên/xuống trong màn hình dịch nếu văn bản quá dài
+• KHÓA: Tích vào "Khóa màn hình dịch" trong tab "Điều Khiển" để ngăn di chuyển nhầm
+• TỰ ĐỘNG LƯU: Vị trí và kích thước được tự động lưu lại
+
+═══════════════════════════════════════════════════════════════════════════════
+3. MẸO SỬ DỤNG
+═══════════════════════════════════════════════════════════════════════════════
+
+• SỬ DỤNG PRESET:
+  - Game có hội thoại nhanh: Chọn "Tối Ưu Tốc Độ"
+  - Game/ứng dụng thường: Chọn "Cân Bằng"
+  - Cần đọc kỹ: Chọn "Tối Ưu Chất Lượng"
+
+• CHỌN VÙNG CHỤP:
+  - Chọn càng chính xác càng tốt - chỉ vùng hộp thoại
+  - Tránh chọn vùng quá lớn - sẽ dịch chậm hơn
+
+• CHỌN ENGINE OCR:
+  - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
+  - EasyOCR thường chính xác hơn cho tiếng Nhật, Hàn, Trung
+
+• CHỌN DỊCH VỤ DỊCH THUẬT:
+  - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
+  - DeepL: Chất lượng tốt hơn, đặc biệt cho tiếng Nhật, Hàn (cần trả phí)
+
+• TỐI ƯU GIAO DIỆN:
+  - Tắt hiển thị văn bản gốc để giảm tải
+  - Giảm độ trong suốt nếu cần đọc rõ hơn
+  - Sử dụng phông chữ đơn giản (Arial, Helvetica) để hiển thị nhanh hơn
+
+• KHI CHƠI GAME:
+  - Khóa màn hình dịch để tránh di chuyển nhầm
+  - Sử dụng preset "Tối Ưu Tốc Độ" cho game có hội thoại nhanh
+  - Đặt màn hình dịch ở vị trí không che khuất gameplay
+
+═══════════════════════════════════════════════════════════════════════════════
+4. XỬ LÝ SỰ CỐ
+═══════════════════════════════════════════════════════════════════════════════
+
+• OCR KHÔNG HOẠT ĐỘNG:
+  - Kiểm tra Tesseract đã cài đặt đúng chưa
+  - Sử dụng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn Tesseract
+  - Thử chuyển sang EasyOCR nếu có
+  - Kiểm tra ngôn ngữ nguồn đã chọn đúng chưa
+
+• DỊCH KHÔNG HOẠT ĐỘNG:
+  - Kiểm tra kết nối internet (cần cho Google Translate và DeepL)
+  - Nếu dùng DeepL: Kiểm tra API key đã nhập đúng chưa
+  - Thử chuyển sang Google Translate nếu DeepL có vấn đề
+
+• DỊCH SAI:
+  - Thử thay đổi ngôn ngữ nguồn
+  - Thử chuyển engine OCR (Tesseract ↔ EasyOCR)
+  - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
+
+• CHẬM HOẶC LAG:
+  - Tăng khoảng thời gian cập nhật (200-300ms)
+  - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
+  - Chọn vùng chụp nhỏ hơn
+  - Tắt hiển thị văn bản gốc
+  - Đóng các ứng dụng khác đang chạy
+
+• MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
+  - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
+  - Thử dừng và khởi động lại dịch
+  - Nhấn "Đặt Lại Tất Cả" trong tab "Giao Diện Dịch" để reset vị trí
+  - Đảm bảo tỷ lệ hiển thị màn hình Windows là 100%
+
+• XEM CHI TIẾT:
+  - Xem tab "Trạng Thái" để biết thông tin chi tiết về lỗi
+  - Kiểm tra file error_log.txt trong thư mục chương trình (nếu có)
+
+═══════════════════════════════════════════════════════════════════════════════
+5. CÁC TÍNH NĂNG
+═══════════════════════════════════════════════════════════════════════════════
+
+• Hỗ trợ 2 engine OCR: Tesseract và EasyOCR
+• Hỗ trợ 2 dịch vụ dịch thuật: Google Translate và DeepL
+• Tự động phát hiện và xử lý nhiều hộp thoại liên tiếp
+• Tự động lưu và khôi phục cài đặt
+• Giao diện tùy chỉnh hoàn toàn với preset nhanh
+• Hỗ trợ nhiều ngôn ngữ OCR và dịch thuật
+• Khóa màn hình dịch để tránh di chuyển nhầm khi chơi game
+
+═══════════════════════════════════════════════════════════════════════════════
+6. LƯU Ý QUAN TRỌNG
+═══════════════════════════════════════════════════════════════════════════════
+
+• Cần kết nối internet để dịch (Google Translate và DeepL)
+• Chất lượng dịch phụ thuộc vào:
+  - Độ rõ và kích thước văn bản
+  - Độ tương phản nền
+  - Kiểu phông chữ
+  - Độ chính xác của OCR
+• Tất cả cài đặt được tự động lưu lại
+• Công cụ sẽ tự động điều chỉnh tốc độ để hoạt động mượt mà
+
+═══════════════════════════════════════════════════════════════════════════════
+7. NGÔN NGỮ ĐƯỢC HỖ TRỢ
+═══════════════════════════════════════════════════════════════════════════════
+
+NGÔN NGỮ NGUỒN (OCR):
+• Tiếng Anh
+• Tiếng Nhật
+• Tiếng Hàn
+• Tiếng Trung (Giản thể và Phồn thể)
+• Tiếng Pháp
+• Tiếng Đức
+• Tiếng Tây Ban Nha
+
+NGÔN NGỮ ĐÍCH (DỊCH THUẬT):
+• Tiếng Việt
+• Tiếng Anh
+• Tiếng Nhật
+• Tiếng Hàn
+• Tiếng Trung
+• Tiếng Pháp
+• Tiếng Đức
+• Tiếng Tây Ban Nha
+
+═══════════════════════════════════════════════════════════════════════════════
+8. CÁC TAB TRONG CÔNG CỤ
+═══════════════════════════════════════════════════════════════════════════════
+
+TAB 1: CÀI ĐẶT
+• Chọn vùng chụp màn hình
+• Ngôn ngữ nguồn (OCR)
+• Khoảng thời gian cập nhật
+• Engine OCR (Tesseract/EasyOCR)
+• Đường dẫn Tesseract (khi chọn Tesseract)
+• Ngôn ngữ đích
+• Dịch vụ dịch thuật (Google/DeepL)
+• DeepL API Key (khi chọn DeepL)
+
+TAB 2: GIAO DIỆN DỊCH
+• Cấu hình nhanh (Preset): Tối Ưu Tốc Độ, Cân Bằng, Tối Ưu Chất Lượng, Mặc Định
+• Tùy chỉnh thủ công: Font, màu sắc, kích thước, độ trong suốt, v.v.
+• Nút "Áp Dụng" và "Đặt Lại Tất Cả"
+
+TAB 3: ĐIỀU KHIỂN
+• Nút "Bắt Đầu Dịch"
+• Nút "Dừng Dịch"
+• Khóa màn hình dịch
+
+TAB 4: TRẠNG THÁI
+• Hiển thị nhật ký hoạt động
+• Thông tin về lỗi, cảnh báo, và trạng thái
+
+TAB 5: HƯỚNG DẪN
+• Hướng dẫn sử dụng đầy đủ
+• Mẹo sử dụng
+• Xử lý sự cố
+
+═══════════════════════════════════════════════════════════════════════════════
+Chúc bạn sử dụng công cụ hiệu quả!
+═══════════════════════════════════════════════════════════════════════════════

@@ -56,13 +56,27 @@ def test_imports():
     except ImportError as e:
         errors.append(f"✗ cv2: {e}")
     
+    # Test optional dependencies
+    print("\nTesting optional dependencies...")
+    try:
+        import easyocr
+        print("✓ easyocr (optional)")
+    except ImportError:
+        print("⚠ easyocr not installed (optional)")
+    
+    try:
+        import deepl
+        print("✓ deepl (optional)")
+    except ImportError:
+        print("⚠ deepl not installed (optional)")
+    
     if errors:
         print("\nErrors found:")
         for error in errors:
             print(f"  {error}")
         return False
     else:
-        print("\n✓ All imports successful!")
+        print("\n✓ All required imports successful!")
         return True
 
 def test_tesseract():
