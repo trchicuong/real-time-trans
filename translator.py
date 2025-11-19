@@ -3,13 +3,28 @@ Công cụ dịch màn hình thời gian thực
 Tác giả: trchicuong
 """
 
+import os
+import sys
+
+# Fix scaling issues on Windows with high DPI displays
+if os.name == 'nt':  # Windows only
+    try:
+        import ctypes
+        # Set process DPI awareness (Windows 8.1+)
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        try:
+            # Fallback for Windows 8 and older
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass  # If all fails, continue without DPI awareness
+
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import time
 import json
-import os
-import sys
 import shutil
 import re
 import traceback
@@ -47,6 +62,16 @@ try:
 except ImportError:
     pass
 
+# Handlers cho free OCR engines
+try:
+    from handlers import TesseractOCRHandler, EasyOCRHandler, TranslationCacheManager
+    HANDLERS_AVAILABLE = True
+except ImportError:
+    HANDLERS_AVAILABLE = False
+    TesseractOCRHandler = None
+    EasyOCRHandler = None
+    TranslationCacheManager = None
+
 def get_base_dir():
     """Lấy thư mục gốc để lưu config.json và error_log.txt
     Hỗ trợ cả chạy từ Python script và frozen executable (PyInstaller)
@@ -81,6 +106,58 @@ def log_error(error_msg, exception=None):
     except Exception:
         pass
 
+def get_actual_screen_size():
+    """
+    Lấy kích thước màn hình thực tế, xử lý DPI scaling đúng cách.
+    
+    Returns:
+        tuple: (width, height) của màn hình chính
+    """
+    if os.name == 'nt':  # Windows
+        try:
+            import ctypes
+            # Get actual screen dimensions considering DPI
+            user32 = ctypes.windll.user32
+            # SM_CXSCREEN = 0, SM_CYSCREEN = 1 (primary monitor)
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+            return (width, height)
+        except Exception:
+            pass
+    
+    # Fallback: dùng mss (cross-platform và reliable)
+    try:
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]  # Primary monitor
+            return (monitor['width'], monitor['height'])
+    except Exception:
+        pass
+    
+    # Last resort: tkinter (có thể không chính xác với DPI)
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        root.destroy()
+        return (width, height)
+    except Exception:
+        # Default fallback
+        return (1920, 1080)
+
+def get_all_monitors_bounds():
+    """
+    Lấy bounds của tất cả monitors (hỗ trợ multi-monitor setup)
+    
+    Returns:
+        dict: Monitor bounds từ mss
+    """
+    try:
+        with mss.mss() as sct:
+            return sct.monitors
+    except Exception:
+        return None
+
 def find_tesseract(custom_path=None):
     """Tự động tìm đường dẫn Tesseract OCR - hỗ trợ Windows, Linux, macOS"""
     if custom_path:
@@ -98,17 +175,37 @@ def find_tesseract(custom_path=None):
                 return os.path.normpath(tesseract_exe)
     
     # Thử tìm trong PATH trước (hoạt động trên mọi OS)
+    # shutil.which() tự động tìm trong PATH environment variable
     tesseract_cmd = shutil.which('tesseract')
     if tesseract_cmd:
         return os.path.normpath(tesseract_cmd)
     
-    # Chỉ tìm trong các đường dẫn Windows mặc định nếu là Windows
-    if os.name == 'nt':
+    # Tìm trong các đường dẫn mặc định theo OS
+    if os.name == 'nt':  # Windows
         windows_paths = [
             r'C:\Program Files\Tesseract-OCR\tesseract.exe',
             r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+            r'C:\Tesseract-OCR\tesseract.exe',
         ]
         for path in windows_paths:
+            if os.path.exists(path):
+                return os.path.normpath(path)
+    elif sys.platform == 'darwin':  # macOS
+        mac_paths = [
+            '/usr/local/bin/tesseract',
+            '/opt/homebrew/bin/tesseract',
+            '/usr/bin/tesseract',
+        ]
+        for path in mac_paths:
+            if os.path.exists(path):
+                return os.path.normpath(path)
+    else:  # Linux và các OS khác
+        linux_paths = [
+            '/usr/bin/tesseract',
+            '/usr/local/bin/tesseract',
+            '/opt/tesseract/bin/tesseract',
+        ]
+        for path in linux_paths:
             if os.path.exists(path):
                 return os.path.normpath(path)
     
@@ -124,7 +221,20 @@ class ScreenTranslator:
         """Khởi tạo công cụ"""
         self.root = root
         self.root.title("Công Cụ Dịch Màn Hình Thời Gian Thực")
-        self.root.geometry("600x800")
+        
+        # Responsive window size based on screen dimensions
+        screen_width, screen_height = get_actual_screen_size()
+        
+        # Calculate appropriate window size (max 600x800, but scale down for small screens)
+        window_width = min(600, int(screen_width * 0.4))  # Max 40% of screen width
+        window_height = min(800, int(screen_height * 0.7))  # Max 70% of screen height
+        
+        # Minimum size to ensure UI is usable
+        window_width = max(500, window_width)
+        window_height = max(600, window_height)
+        
+        self.root.geometry(f"{window_width}x{window_height}")
+        self.root.minsize(500, 600)  # Set minimum size
         self.root.resizable(True, True)
         
         self.author = "trchicuong"
@@ -137,10 +247,26 @@ class ScreenTranslator:
         self.translator = GoogleTranslator(source='auto', target='vi')
         self.custom_tesseract_path = None
         
+        # Khởi tạo source_language TRƯỚC khi tạo handlers
+        self.source_language = "eng"
+        self.target_language = "vi"
+        
         # OCR Engine selection
         self.ocr_engine = "tesseract"  # Default: tesseract hoặc easyocr
         self.EASYOCR_AVAILABLE = EASYOCR_AVAILABLE
-        self.easyocr_reader = None  # Lazy initialization
+        self.HANDLERS_AVAILABLE = HANDLERS_AVAILABLE
+        
+        # OCR Handlers (nếu có) - cần source_language đã được khởi tạo
+        if HANDLERS_AVAILABLE:
+            self.tesseract_handler = TesseractOCRHandler(source_language=self.source_language)
+            self.easyocr_handler = EasyOCRHandler(source_language=self.source_language) if EASYOCR_AVAILABLE else None
+        else:
+            self.tesseract_handler = None
+            self.easyocr_handler = None
+            # Fallback: giữ code cũ
+            self.easyocr_reader = None
+            self.last_easyocr_call_time = 0.0
+            self.easyocr_min_interval = 0.8
         
         # DeepL API support
         self.DEEPL_API_AVAILABLE = DEEPL_API_AVAILABLE
@@ -150,9 +276,6 @@ class ScreenTranslator:
         
         self.overlay_drag_start_x = 0
         self.overlay_drag_start_y = 0
-        
-        self.source_language = "eng"
-        self.target_language = "vi"
         self.update_interval = 0.2
         
         self.overlay_font_size = 15
@@ -165,6 +288,7 @@ class ScreenTranslator:
         self.overlay_width = 500
         self.overlay_height = 280
         self.overlay_show_original = True
+        self.overlay_keep_history = False  # Ghi lại lịch sử dịch (append thay vì replace)
         self.overlay_text_align = "left"
         self.overlay_line_spacing = 1.3
         self.overlay_padding_x = 18
@@ -175,9 +299,17 @@ class ScreenTranslator:
         self.overlay_word_wrap = True
         
         self.text_history = []
-        self.history_size = 1
+        self.history_size = 5  # Tăng để track context tốt hơn
         self.performance_mode = "balanced"
-        self.translation_cache = {}
+        
+        # Translation Cache Manager (nếu có handlers)
+        if HANDLERS_AVAILABLE and TranslationCacheManager:
+            self.cache_manager = TranslationCacheManager(max_size=2000)
+            self.translation_cache = {}  # Giữ để backward compatibility
+        else:
+            self.cache_manager = None
+            self.translation_cache = {}
+        self.max_cache_size = 2000  # Tăng cache cho long sessions
         self.pending_translation = None
         self.translation_lock = threading.Lock()
         
@@ -197,7 +329,9 @@ class ScreenTranslator:
         self.translation_queue = queue.Queue(maxsize=10)  # Queue để truyền text (legacy, ít dùng)
         
         # Thread pools cho async processing
-        # Tăng thread pool size để xử lý nhanh hơn
+        # EasyOCR: giảm workers để giảm CPU (rất nặng)
+        # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
+        # Sẽ được điều chỉnh trong start_translation() dựa trên OCR engine
         self.ocr_thread_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="OCR")
         self.translation_thread_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="Translation")
         
@@ -211,6 +345,14 @@ class ScreenTranslator:
         # Tăng concurrent calls để xử lý nhanh hơn
         self.max_concurrent_ocr_calls = 8
         self.max_concurrent_translation_calls = 6
+        
+        # Long session optimization: periodic cleanup
+        self.last_cleanup_time = time.time()
+        self.cleanup_interval = 300  # Cleanup mỗi 5 phút
+        
+        # Cache preprocessing mode và tesseract params
+        self.cached_prep_mode = None
+        self.cached_tess_params = None
         
         # Adaptive scan interval
         self.base_scan_interval = int(self.update_interval * 1000)  # ms
@@ -256,31 +398,79 @@ class ScreenTranslator:
                 if hasattr(self, 'translation_service_var'):
                     self.translation_service_var.set("google")
         
-        if not self.verify_tesseract():
-            self.log("Cảnh báo: Không tìm thấy Tesseract OCR. Vui lòng sử dụng nút 'Duyệt' để đặt đường dẫn.")
-            tesseract_path = find_tesseract(self.custom_tesseract_path)
-            if tesseract_path:
-                # Chuẩn hóa đường dẫn
-                tesseract_path = os.path.normpath(tesseract_path)
-                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                if self.verify_tesseract():
-                    self.log(f"Tự động tìm thấy Tesseract: {tesseract_path}")
-                    if hasattr(self, 'tesseract_path_label'):
-                        self.tesseract_path_label.config(
-                            text=f"Đường dẫn: {tesseract_path}",
-                            fg="green"
-                        )
+        # Try to find Tesseract automatically (don't verify yet to avoid startup errors)
+        tesseract_path = find_tesseract(self.custom_tesseract_path)
+        if tesseract_path:
+            # Chuẩn hóa đường dẫn
+            tesseract_path = os.path.normpath(tesseract_path)
+            pytesseract.pytesseract.tesseract_cmd = tesseract_path
+            self.custom_tesseract_path = tesseract_path
+            self.log(f"Tìm thấy Tesseract tại: {tesseract_path}")
+            if hasattr(self, 'tesseract_path_label'):
+                self.tesseract_path_label.config(
+                    text=f"Đường dẫn: {tesseract_path}",
+                    fg="green"
+                )
+        else:
+            self.log("Cảnh báo: Chưa tìm thấy Tesseract OCR. Nếu sử dụng Tesseract, vui lòng dùng nút 'Duyệt' để chọn đường dẫn.")
+            if hasattr(self, 'tesseract_path_label'):
+                self.tesseract_path_label.config(
+                    text="Chưa cấu hình",
+                    fg="orange"
+                )
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
-    def verify_tesseract(self):
-        """Kiểm tra Tesseract OCR đã được cài đặt và có thể truy cập"""
+    def verify_tesseract(self, silent=False):
+        """Kiểm tra Tesseract OCR đã được cài đặt và có thể truy cập
+        
+        Args:
+            silent: Nếu True, không log error (dùng cho background checks)
+        
+        Returns:
+            bool: True nếu Tesseract available, False otherwise
+        """
         try:
-            pytesseract.get_tesseract_version()
+            version = pytesseract.get_tesseract_version()
             return True
-        except Exception as e:
-            log_error("Lỗi kiểm tra Tesseract version", e)
+        except pytesseract.TesseractNotFoundError:
+            if not silent:
+                self.log("Lỗi: Tesseract OCR chưa được cài đặt hoặc chưa cấu hình đường dẫn.")
             return False
+        except Exception as e:
+            if not silent:
+                log_error("Lỗi kiểm tra Tesseract", e)
+            return False
+    
+    def ensure_tesseract_ready(self):
+        """Đảm bảo Tesseract sẵn sàng cho OCR. Return True nếu OK, False nếu fail
+        
+        Chỉ check khi đang dùng Tesseract engine
+        """
+        if self.ocr_engine != "tesseract":
+            return True  # Không cần Tesseract nếu dùng EasyOCR
+        
+        if self.verify_tesseract(silent=True):
+            return True
+        
+        # Tesseract not ready - show clear error message
+        error_msg = (
+            "Tesseract OCR chưa được cài đặt hoặc chưa cấu hình!\n\n"
+            "Hướng dẫn:\n"
+            "1. Tải Tesseract từ: https://github.com/UB-Mannheim/tesseract/wiki\n"
+            "2. Cài đặt Tesseract vào máy\n"
+            "3. Sử dụng nút 'Duyệt' trong tab 'Cài Đặt' để chọn đường dẫn tesseract.exe\n\n"
+            "Hoặc:\n"
+            "- Chuyển sang Engine OCR khác (EasyOCR) nếu đã cài đặt"
+        )
+        
+        try:
+            messagebox.showerror("Lỗi Tesseract OCR", error_msg)
+        except Exception as e:
+            log_error("Error showing messagebox", e)
+        
+        self.log("Lỗi: Tesseract OCR chưa sẵn sàng. Vui lòng cấu hình theo hướng dẫn.")
+        return False
     
     def browse_tesseract_path(self):
         """Duyệt thư mục cài đặt Tesseract - hỗ trợ Windows, Linux, macOS"""
@@ -520,7 +710,7 @@ class ScreenTranslator:
         interval_spin.grid(row=1, column=1, pady=5)
         interval_spin.bind("<FocusOut>", self.on_interval_change)
         
-        # OCR Engine Selection
+        # OCR Engine Selection - chỉ free engines
         ttk.Label(settings_frame, text="Engine OCR:").grid(row=2, column=0, sticky=tk.W, pady=5)
         ocr_engine_values = ["tesseract"]
         if self.EASYOCR_AVAILABLE:
@@ -631,8 +821,9 @@ class ScreenTranslator:
         service_combo.bind("<<ComboboxSelected>>", self.on_translation_service_change)
         
         # DeepL API Key (only show if DeepL is available)
+        next_row = 2
         if self.DEEPL_API_AVAILABLE:
-            ttk.Label(translation_frame, text="DeepL API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            ttk.Label(translation_frame, text="DeepL API Key:").grid(row=next_row, column=0, sticky=tk.W, pady=5)
             self.deepl_api_key_var = tk.StringVar(value=self.deepl_api_key)
             deepl_key_entry = ttk.Entry(
                 translation_frame,
@@ -640,9 +831,11 @@ class ScreenTranslator:
                 width=40,
                 show="*"
             )
-            deepl_key_entry.grid(row=2, column=1, pady=5, sticky=tk.W+tk.E)
+            deepl_key_entry.grid(row=next_row, column=1, pady=5, sticky=tk.W+tk.E)
             deepl_key_entry.bind("<FocusOut>", self.on_deepl_key_change)
-            translation_frame.columnconfigure(1, weight=1)
+            next_row += 1
+        
+        translation_frame.columnconfigure(1, weight=1)
     
     def create_overlay_tab(self, parent):
         """Tạo tab tùy chỉnh overlay"""
@@ -844,15 +1037,6 @@ class ScreenTranslator:
         border_color_entry = ttk.Entry(settings_container, textvariable=self.border_color_var, width=12)
         border_color_entry.grid(row=7, column=3, pady=3, padx=5)
         
-        # Text Shadow
-        self.text_shadow_var = tk.BooleanVar(value=self.overlay_text_shadow)
-        text_shadow_check = ttk.Checkbutton(
-            settings_container,
-            text="Bóng Chữ",
-            variable=self.text_shadow_var
-        )
-        text_shadow_check.grid(row=8, column=0, columnspan=2, sticky=tk.W, pady=5)
-        
         # Word Wrap
         self.word_wrap_var = tk.BooleanVar(value=self.overlay_word_wrap)
         word_wrap_check = ttk.Checkbutton(
@@ -860,11 +1044,21 @@ class ScreenTranslator:
             text="Xuống Dòng Tự Động",
             variable=self.word_wrap_var
         )
-        word_wrap_check.grid(row=8, column=2, columnspan=2, sticky=tk.W, pady=5)
+        word_wrap_check.grid(row=8, column=0, columnspan=4, sticky=tk.W, pady=5)
+        
+        # Keep Translation History
+        self.keep_history_var = tk.BooleanVar(value=self.overlay_keep_history)
+        keep_history_check = ttk.Checkbutton(
+            settings_container,
+            text="Ghi Lại Lịch Sử Dịch (Không Ghi Đè)",
+            variable=self.keep_history_var
+            # Không có command - chỉ apply khi nhấn nút Áp dụng
+        )
+        keep_history_check.grid(row=9, column=0, columnspan=4, sticky=tk.W, pady=5)
         
         # Preset configurations frame
         preset_frame = ttk.LabelFrame(settings_container, text="Cấu Hình Nhanh (Preset)", padding=10)
-        preset_frame.grid(row=9, column=0, columnspan=4, pady=10, sticky=tk.EW)
+        preset_frame.grid(row=10, column=0, columnspan=4, pady=10, sticky=tk.EW)
         
         preset_buttons_frame = ttk.Frame(preset_frame)
         preset_buttons_frame.pack(fill=tk.X)
@@ -899,7 +1093,7 @@ class ScreenTranslator:
         
         # Apply and Reset buttons frame
         apply_button_frame = ttk.Frame(settings_container)
-        apply_button_frame.grid(row=10, column=0, columnspan=4, pady=15, sticky=tk.EW)
+        apply_button_frame.grid(row=11, column=0, columnspan=4, pady=15, sticky=tk.EW)
         
         ttk.Button(
             apply_button_frame,
@@ -1000,103 +1194,185 @@ class ScreenTranslator:
         notes_canvas.configure(yscrollcommand=notes_scrollbar.set)
         
         # Instructions content - Hướng dẫn cho người dùng phổ thông (EXE)
+        # Lưu ý: Nội dung này dành cho người dùng cuối, không chứa thông tin kỹ thuật/dev
         instructions_text = """
 HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
 
-1. CÀI ĐẶT:
-   • Cài đặt Tesseract OCR (BẮT BUỘC):
-     - Tải từ: https://github.com/UB-Mannheim/tesseract/wiki
+1. CÀI ĐẶT
+
+BƯỚC 1: Cài đặt Tesseract OCR (BẮT BUỘC)
+   • Windows:
+     - Tải Tesseract OCR từ: https://github.com/UB-Mannheim/tesseract/wiki
      - Chạy file cài đặt và làm theo hướng dẫn
-     - Ghi nhớ thư mục cài đặt
-     - Nếu công cụ không tự động tìm thấy, dùng nút "Duyệt" trong tab "Cài Đặt" để chọn
+     - Ghi nhớ thư mục cài đặt (thường là C:\\Program Files\\Tesseract-OCR)
+     - Khi chạy công cụ lần đầu, nếu công cụ không tự động tìm thấy Tesseract,
+       bạn sẽ cần dùng nút "Duyệt" để chọn đường dẫn Tesseract
    
-   • Cài đặt dữ liệu ngôn ngữ (Nếu cần):
-     - Nếu ứng dụng dùng tiếng Nhật, Hàn, Trung, v.v.
+   • macOS: Mở Terminal và chạy: brew install tesseract
+   
+   • Linux: 
+     - Ubuntu/Debian: sudo apt-get install tesseract-ocr
+     - Fedora: sudo dnf install tesseract
+
+BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (Nếu cần)
+   • Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm:
+   • Windows: 
      - Tải từ: https://github.com/tesseract-ocr/tessdata
-     - Đặt file .traineddata vào thư mục tessdata của Tesseract
+     - Đặt các file .traineddata vào thư mục tessdata của Tesseract
+     - Thư mục tessdata thường ở: C:\\Program Files\\Tesseract-OCR\\tessdata\\
    
-   • Chạy công cụ:
-     - Chạy trực tiếp file RealTimeScreenTranslator.exe
-     - Cửa sổ công cụ sẽ hiện ra
+   • macOS/Linux:
+     - Ubuntu/Debian: sudo apt-get install tesseract-ocr-jpn  (ví dụ tiếng Nhật)
+     - macOS: brew install tesseract-lang  (bao gồm nhiều ngôn ngữ)
 
-2. BẮT ĐẦU SỬ DỤNG:
-   • Chọn vùng chụp màn hình:
-     - Mở ứng dụng (game, ứng dụng, v.v.) mà bạn muốn dịch
-     - Trong tab "Cài Đặt", nhấn nút "Chọn Vùng"
-     - Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
-     - Dùng chuột kéo để chọn vùng hộp thoại, thả để xác nhận
-     - ⚠️ Chọn càng chính xác càng tốt - chỉ vùng hộp thoại!
-   
-   • Cấu hình cài đặt (Tab "Cài Đặt"):
-     - Ngôn ngữ nguồn: Chọn ngôn ngữ của văn bản trong ứng dụng
-     - Khoảng thời gian cập nhật: 100-200ms cho game, 200-300ms cho ứng dụng thường
-     - Engine OCR: Chọn Tesseract hoặc EasyOCR
-     - Ngôn ngữ đích: Chọn ngôn ngữ muốn dịch sang
-     - Dịch vụ dịch thuật: Google Translate (miễn phí) hoặc DeepL (cần API key)
-   
-   • Tùy chỉnh giao diện (Tab "Giao Diện Dịch"):
-     - Sử dụng Preset: "Tối Ưu Tốc Độ", "Cân Bằng", "Tối Ưu Chất Lượng", "Mặc Định"
-     - Hoặc tùy chỉnh thủ công: cỡ chữ, phông chữ, màu sắc, kích thước, v.v.
-     - Nhấn "Áp Dụng" sau khi thay đổi
-   
-   • Bắt đầu dịch (Tab "Điều Khiển"):
-     - Nhấn nút "Bắt Đầu Dịch"
-     - Màn hình dịch sẽ xuất hiện và tự động dịch văn bản
+BƯỚC 3: Chạy công cụ
+   • Chạy trực tiếp file RealTimeScreenTranslator.exe
+   • Nếu có cảnh báo của Windows, chấp nhận quyền truy cập "Run anyway"
+   • Đợi một lúc để công cụ cài đặt những Engine cần thiết ở nền, sau đó cửa sổ công cụ sẽ hiện ra (khoảng 5 -10s)
 
-3. SỬ DỤNG MÀN HÌNH DỊCH:
-   • Di chuyển: Kéo thả màn hình dịch đến vị trí mong muốn
-   • Thay đổi kích thước: Kéo các cạnh hoặc góc để resize
-   • Cuộn văn bản: Cuộn lên/xuống trong màn hình dịch nếu văn bản quá dài
-   • Khóa: Tích vào "Khóa màn hình dịch" trong tab "Điều Khiển" để ngăn di chuyển nhầm
-   • Tự động lưu: Vị trí và kích thước được tự động lưu lại
+2. BẮT ĐẦU SỬ DỤNG
 
-4. MẸO SỬ DỤNG:
-   • Sử dụng Preset:
-     - Game có hội thoại nhanh: "Tối Ưu Tốc Độ"
-     - Game/ứng dụng thường: "Cân Bằng"
-     - Cần đọc kỹ: "Tối Ưu Chất Lượng"
+BƯỚC 1: Chọn vùng chụp màn hình
+   1. Mở ứng dụng của bạn (game, ứng dụng, v.v.) mà bạn muốn dịch
+   2. Trong cửa sổ công cụ dịch, chọn tab "Cài Đặt"
+   3. Nhấn nút "Chọn Vùng"
+   4. Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
+   5. Dùng chuột kéo để chọn vùng hộp thoại trong ứng dụng
+   6. Thả chuột để xác nhận
    
-   • Chọn vùng chụp càng chính xác càng tốt - chỉ vùng hộp thoại
-   • Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
-   • Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
-   • DeepL: Chất lượng tốt hơn, đặc biệt cho tiếng Nhật, Hàn (cần trả phí)
-   • Khi chơi game: Khóa màn hình dịch và sử dụng preset "Tối Ưu Tốc Độ"
+   ⚠️ LƯU Ý QUAN TRỌNG:
+      - Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
+      - Chọn vùng nhỏ hơn = dịch nhanh hơn
+      - Tránh chọn vùng quá lớn hoặc bao gồm nhiều phần không cần thiết
 
-5. XỬ LÝ SỰ CỐ:
-   • OCR không hoạt động:
+BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
+   1. NGÔN NGỮ NGUỒN:
+      - Chọn ngôn ngữ của văn bản trong ứng dụng
+      - Ví dụ: Tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   
+   2. KHOẢNG THỜI GIAN CẬP NHẬT:
+      - Giá trị nhỏ (50-200ms): Dịch nhanh hơn nhưng tốn CPU hơn
+      - Giá trị lớn (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
+      - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
+      - Lưu ý: Preset sẽ tự động cập nhật giá trị này
+   
+   3. ENGINE OCR:
+      - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
+      - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU hơn
+      - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
+   
+   4. NGÔN NGỮ ĐÍCH:
+      - Chọn ngôn ngữ muốn dịch sang
+      - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   
+   5. DỊCH VỤ DỊCH THUẬT:
+      - Google Translate: Miễn phí, không cần API key
+      - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
+        - Nếu chọn DeepL, nhập API Key vào ô tương ứng
+        - Lấy API key tại: https://www.deepl.com/pro-api
+
+BƯỚC 3: Tùy chỉnh giao diện dịch (Tab "Giao Diện Dịch")
+   1. CẤU HÌNH NHANH (PRESET) - Khuyến nghị sử dụng:
+      - "Tối Ưu Tốc Độ": Phù hợp game có hội thoại xuất hiện nhanh
+      - "Cân Bằng": Phù hợp hầu hết game và ứng dụng
+      - "Tối Ưu Chất Lượng": Phù hợp khi cần đọc kỹ, chất lượng cao
+      - "Mặc Định": Cài đặt mặc định
+      - ⚠️ Sau khi chọn preset, nhấn "Áp Dụng" để áp dụng cài đặt
+   
+   2. TÙY CHỈNH THỦ CÔNG:
+      Bạn có thể tùy chỉnh:
+      - Cỡ chữ, phông chữ, độ đậm
+      - Màu chữ, màu nền, màu văn bản gốc
+      - Độ trong suốt
+      - Kích thước màn hình dịch
+      - Căn lề, khoảng cách dòng
+      - Viền, padding
+      - Hiển thị văn bản gốc
+      - Lưu lịch sử dịch
+   
+   3. NÚT ĐIỀU KHIỂN:
+      - "Áp Dụng": Áp dụng tất cả cài đặt đã thay đổi
+      - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp màn hình, engine OCR, dịch vụ dịch và DeepL key)
+
+BƯỚC 4: Bắt đầu dịch (Tab "Điều Khiển")
+   1. Nhấn nút "Bắt Đầu Dịch"
+   2. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
+   3. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
+   4. Công cụ sẽ tự động xử lý nhiều hộp thoại liên tiếp
+
+BƯỚC 5: Sử dụng màn hình dịch
+   • DI CHUYỂN: Kéo thả màn hình dịch đến vị trí mong muốn
+   • THAY ĐỔI KÍCH THƯỚC: Kéo các cạnh hoặc góc để thay đổi kích thước
+   • CUỘN VĂN BẢN: Cuộn lên/xuống trong màn hình dịch nếu văn bản quá dài
+   • KHÓA: Tích vào "Khóa màn hình dịch" trong tab "Điều Khiển" để ngăn di chuyển nhầm
+   • TỰ ĐỘNG LƯU: Vị trí và kích thước được tự động lưu lại
+
+3. MẸO SỬ DỤNG
+
+   • SỬ DỤNG PRESET:
+     - Game có hội thoại nhanh: Chọn "Tối Ưu Tốc Độ"
+     - Game/ứng dụng thường: Chọn "Cân Bằng"
+     - Cần đọc kỹ: Chọn "Tối Ưu Chất Lượng"
+   
+   • CHỌN VÙNG CHỤP:
+     - Chọn càng chính xác càng tốt - chỉ vùng hộp thoại
+     - Tránh chọn vùng quá lớn - sẽ dịch chậm hơn
+   
+   • CHỌN ENGINE OCR:
+     - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
+     - EasyOCR thường chính xác hơn cho game hoặc các văn bản tiếng Nhật, Hàn, Trung
+   
+   • CHỌN DỊCH VỤ DỊCH THUẬT:
+     - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
+     - DeepL: Chất lượng tốt hơn, đặc biệt cho tiếng Nhật, Hàn (cần trả phí)
+   
+   • TỐI ƯU GIAO DIỆN:
+     - Tắt hiển thị văn bản gốc để giảm tải
+     - Giảm độ trong suốt nếu cần đọc rõ hơn
+     - Sử dụng phông chữ đơn giản (Arial, Helvetica) để hiển thị nhanh hơn
+   
+   • KHI CHƠI GAME:
+     - Khóa màn hình dịch để tránh di chuyển nhầm
+     - Sử dụng preset "Tối Ưu Tốc Độ" cho game có hội thoại nhanh
+     - Đặt màn hình dịch ở vị trí không che khuất gameplay
+
+4. XỬ LÝ SỰ CỐ
+
+   • OCR KHÔNG HOẠT ĐỘNG:
      - Kiểm tra Tesseract đã cài đặt đúng chưa
-     - Dùng nút "Duyệt" để chọn đường dẫn Tesseract
-     - Thử chuyển sang EasyOCR
+     - Sử dụng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn Tesseract
+     - Thử chuyển sang EasyOCR nếu có
      - Kiểm tra ngôn ngữ nguồn đã chọn đúng chưa
    
-   • Dịch không hoạt động:
-     - Kiểm tra kết nối internet
+   • DỊCH KHÔNG HOẠT ĐỘNG:
+     - Kiểm tra kết nối internet (cần cho Google Translate và DeepL)
      - Nếu dùng DeepL: Kiểm tra API key đã nhập đúng chưa
-     - Thử chuyển sang Google Translate
+     - Thử chuyển sang Google Translate nếu DeepL có vấn đề
    
-   • Dịch sai:
+   • DỊCH SAI:
      - Thử thay đổi ngôn ngữ nguồn
      - Thử chuyển engine OCR (Tesseract ↔ EasyOCR)
      - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
    
-   • Chậm hoặc lag:
+   • CHẬM HOẶC LAG:
      - Tăng khoảng thời gian cập nhật (200-300ms)
      - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
      - Chọn vùng chụp nhỏ hơn
      - Tắt hiển thị văn bản gốc
      - Đóng các ứng dụng khác đang chạy
    
-   • Màn hình dịch không hiển thị:
+   • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
      - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
      - Thử dừng và khởi động lại dịch
-     - Nhấn "Đặt Lại Tất Cả" để reset vị trí
+     - Nhấn "Đặt Lại Tất Cả" trong tab "Giao Diện Dịch" để reset vị trí
      - Đảm bảo tỷ lệ hiển thị màn hình Windows là 100%
    
-   • Xem chi tiết:
+   • XEM CHI TIẾT:
      - Xem tab "Trạng Thái" để biết thông tin chi tiết về lỗi
      - Kiểm tra file error_log.txt trong thư mục chương trình (nếu có)
 
-6. LƯU Ý QUAN TRỌNG:
+5. LƯU Ý QUAN TRỌNG
+
    • Cần kết nối internet để dịch (Google Translate và DeepL)
    • Chất lượng dịch phụ thuộc vào:
      - Độ rõ và kích thước văn bản
@@ -1105,26 +1381,50 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
      - Độ chính xác của OCR
    • Tất cả cài đặt được tự động lưu lại
    • Công cụ sẽ tự động điều chỉnh tốc độ để hoạt động mượt mà
+   • Nút "Đặt Lại Tất Cả" sẽ KHÔNG reset:
+     - Vùng chụp màn hình (giữ nguyên vùng đã chọn)
+     - Engine OCR (giữ nguyên Tesseract hoặc EasyOCR)
+     - Dịch vụ dịch thuật (giữ nguyên Google hoặc DeepL)
+     - DeepL API Key (giữ nguyên key đã nhập)
 
-7. CÁC TÍNH NĂNG:
-   • Hỗ trợ 2 engine OCR: Tesseract và EasyOCR
-   • Hỗ trợ 2 dịch vụ dịch thuật: Google Translate và DeepL
-   • Tự động phát hiện và xử lý nhiều hộp thoại liên tiếp
-   • Tự động lưu và khôi phục cài đặt
-   • Giao diện tùy chỉnh hoàn toàn với preset nhanh
-   • Hỗ trợ nhiều ngôn ngữ OCR và dịch thuật
-   • Khóa màn hình dịch để tránh di chuyển nhầm khi chơi game
+6. NGÔN NGỮ ĐƯỢC HỖ TRỢ
 
-8. NGÔN NGỮ ĐƯỢC HỖ TRỢ:
-   • Ngôn ngữ nguồn (OCR): Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
-   • Ngôn ngữ đích (Dịch thuật): Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   NGÔN NGỮ NGUỒN (OCR):
+   • Tiếng Anh, Nhật, Hàn, Trung (Giản thể và Phồn thể), Pháp, Đức, Tây Ban Nha
+   
+   NGÔN NGỮ ĐÍCH (DỊCH THUẬT):
+   • Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
 
-9. CÁC TAB TRONG CÔNG CỤ:
-   • Tab "Cài Đặt": Chọn vùng, ngôn ngữ, engine OCR, dịch vụ dịch thuật
-   • Tab "Giao Diện Dịch": Tùy chỉnh giao diện với preset hoặc thủ công
-   • Tab "Điều Khiển": Bắt đầu/dừng dịch, khóa màn hình dịch
-   • Tab "Trạng Thái": Xem nhật ký hoạt động và thông tin lỗi
-   • Tab "Hướng Dẫn": Xem hướng dẫn sử dụng đầy đủ
+7. CÁC TAB TRONG CÔNG CỤ
+
+   TAB 1: CÀI ĐẶT
+   • Chọn vùng chụp màn hình
+   • Ngôn ngữ nguồn (OCR)
+   • Khoảng thời gian cập nhật
+   • Engine OCR (Tesseract/EasyOCR)
+   • Đường dẫn Tesseract (khi chọn Tesseract)
+   • Ngôn ngữ đích
+   • Dịch vụ dịch thuật (Google/DeepL)
+   • DeepL API Key (khi chọn DeepL)
+   
+   TAB 2: GIAO DIỆN DỊCH
+   • Cấu hình nhanh (Preset): Tối Ưu Tốc Độ, Cân Bằng, Tối Ưu Chất Lượng, Mặc Định
+   • Tùy chỉnh thủ công: Font, màu sắc, kích thước, độ trong suốt, v.v.
+   • Nút "Áp Dụng" và "Đặt Lại Tất Cả"
+   
+   TAB 3: ĐIỀU KHIỂN
+   • Nút "Bắt Đầu Dịch"
+   • Nút "Dừng Dịch"
+   • Khóa màn hình dịch
+   
+   TAB 4: TRẠNG THÁI
+   • Hiển thị nhật ký hoạt động
+   • Thông tin về lỗi, cảnh báo, và trạng thái
+   
+   TAB 5: HƯỚNG DẪN
+   • Hướng dẫn sử dụng đầy đủ (tab này)
+
+Chúc bạn sử dụng công cụ hiệu quả!
         """
         
         notes_label = tk.Label(
@@ -1180,6 +1480,7 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.overlay_width = overlay_config.get('width', 500)
             self.overlay_height = overlay_config.get('height', 280)
             self.overlay_show_original = overlay_config.get('show_original', True)
+            self.overlay_keep_history = overlay_config.get('keep_history', False)
             self.overlay_text_align = overlay_config.get('text_align', 'left')
             self.overlay_line_spacing = overlay_config.get('line_spacing', 1.3)
             self.overlay_padding_x = overlay_config.get('padding_x', 18)
@@ -1211,6 +1512,7 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.deepl_api_key = config.get('deepl_api_key', '')
             self.use_deepl = config.get('use_deepl', False)
             self.target_language = config.get('target_language', 'vi')
+            
         except (FileNotFoundError, IOError, PermissionError) as e:
             log_error("Lỗi đọc file cấu hình", e)
             self.log(f"Lỗi đọc file cấu hình: {e}")
@@ -1249,6 +1551,7 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                     'width': self.overlay_width,
                     'height': self.overlay_height,
                     'show_original': self.overlay_show_original,
+                    'keep_history': self.overlay_keep_history,
                     'text_align': self.overlay_text_align,
                     'line_spacing': self.overlay_line_spacing,
                     'padding_x': self.overlay_padding_x,
@@ -1269,8 +1572,9 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             if config_dir and not os.path.exists(config_dir):
                 try:
                     os.makedirs(config_dir, exist_ok=True)
-                except Exception:
-                    pass  # Nếu không tạo được thư mục, thử ghi trực tiếp
+                except Exception as e:
+                    log_error(f"Error creating config directory: {config_dir}", e)
+                    # Nếu không tạo được thư mục, thử ghi trực tiếp
             
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
@@ -1384,10 +1688,31 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         self.save_config()
         self.log(f"Đã thay đổi ngôn ngữ nguồn thành: {self.source_language}")
         
-        # Khởi tạo lại EasyOCR reader nếu đang dùng EasyOCR
-        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
+        # Cập nhật handlers với ngôn ngữ mới
+        if self.tesseract_handler:
+            self.tesseract_handler.set_source_language(self.source_language)
+        if self.easyocr_handler:
+            self.easyocr_handler.set_source_language(self.source_language)
+        
+        # Fallback: khởi tạo lại EasyOCR reader nếu đang dùng EasyOCR và không có handler
+        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE and not self.easyocr_handler:
             self.easyocr_reader = None  # Reset để khởi tạo lại với ngôn ngữ mới
             self.initialize_easyocr_reader()
+    
+    def clear_translation_history(self):
+        """Xóa toàn bộ lịch sử dịch trong overlay"""
+        try:
+            if hasattr(self, 'translation_text') and self.translation_text:
+                self.translation_text.config(state=tk.NORMAL)
+                self.translation_text.delete('1.0', tk.END)
+                self.translation_text.insert('1.0', "Đã xóa lịch sử. Đang chờ văn bản mới...")
+                self.translation_text.config(state=tk.DISABLED)
+                self.translation_text.see('1.0')
+            elif hasattr(self, 'translation_label') and self.translation_label:
+                self.translation_label.config(text="Đã xóa lịch sử. Đang chờ văn bản mới...")
+            
+        except Exception as e:
+            log_error("Error clearing translation history", e)
     
     def on_ocr_engine_change(self, event=None):
         """Callback khi người dùng thay đổi OCR engine"""
@@ -1406,14 +1731,17 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             
             # Khởi tạo lại OCR engine nếu cần
             if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-                # Reset reader cũ nếu có
-                if old_engine == "easyocr":
-                    self.easyocr_reader = None
-                self.initialize_easyocr_reader()
+                # Chỉ khởi tạo nếu không dùng handlers
+                if not self.easyocr_handler:
+                    # Reset reader cũ nếu có
+                    if hasattr(self, 'easyocr_reader') and old_engine == "easyocr":
+                        self.easyocr_reader = None
+                    self.initialize_easyocr_reader()
             elif self.ocr_engine == "tesseract" and old_engine == "easyocr":
-                # Giải phóng EasyOCR reader khi chuyển về Tesseract
-                self.easyocr_reader = None
-                self.log("Đã giải phóng EasyOCR reader")
+                # Giải phóng EasyOCR reader khi chuyển về Tesseract (chỉ nếu không dùng handlers)
+                if not self.easyocr_handler and hasattr(self, 'easyocr_reader'):
+                    self.easyocr_reader = None
+                    self.log("Đã giải phóng EasyOCR reader")
     
     def update_ocr_engine_ui(self):
         """Cập nhật UI dựa trên OCR engine được chọn"""
@@ -1428,9 +1756,17 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 self.tesseract_path_label_frame.grid_remove()
     
     def initialize_easyocr_reader(self):
-        """Khởi tạo EasyOCR reader (lazy initialization)"""
+        """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers"""
         if not self.EASYOCR_AVAILABLE:
             return None
+        
+        # Chỉ khởi tạo nếu không dùng handlers
+        if self.easyocr_handler:
+            return None
+        
+        # Đảm bảo easyocr_reader attribute tồn tại
+        if not hasattr(self, 'easyocr_reader'):
+            self.easyocr_reader = None
         
         if self.easyocr_reader is None:
             try:
@@ -1472,7 +1808,13 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                         os.environ['PYTHONWARNINGS'] = 'ignore'
                         
                         import easyocr
-                        self.easyocr_reader = easyocr.Reader([easyocr_lang], gpu=False, verbose=False)
+                        # Tối ưu cho long sessions: reuse reader, không reload model
+                        self.easyocr_reader = easyocr.Reader(
+                            [easyocr_lang], 
+                            gpu=False, 
+                            verbose=False,
+                            download_enabled=False  # Không download lại nếu đã có
+                        )
                 finally:
                     # Khôi phục stderr
                     sys.stderr = old_stderr
@@ -1492,7 +1834,8 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.update_interval = interval_ms / 1000.0
             self.save_config()
             self.log(f"Đã thay đổi khoảng thời gian cập nhật thành: {interval_ms}ms")
-        except ValueError:
+        except ValueError as e:
+            log_error("Invalid update interval value", e)
             self.log("Giá trị khoảng thời gian không hợp lệ")
     
     def apply_preset(self, preset_type):
@@ -1521,10 +1864,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.padding_y_var.set("12")
             self.border_width_var.set("0")  # No border for speed
             self.border_color_var.set("#ffffff")
-            self.text_shadow_var.set(False)  # No shadow for speed
             self.word_wrap_var.set(True)
-            self.save_config()  # Save interval change
-            self.log("Đã áp dụng cấu hình: Tối Ưu Tốc Độ (100ms cập nhật)")
+            self.keep_history_var.set(False)  # No history for speed
+            # Không save config và không apply ngay - chỉ set giá trị vào UI vars
+            self.log("Đã chọn cấu hình: Tối Ưu Tốc Độ. Nhấn 'Áp Dụng' để áp dụng.")
         elif preset_type == 'balanced':
             # Balanced: good quality and speed - optimized for most games
             self.update_interval = 0.15  # 150ms for balanced speed
@@ -1548,10 +1891,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.padding_y_var.set("18")
             self.border_width_var.set("0")
             self.border_color_var.set("#ffffff")
-            self.text_shadow_var.set(False)
             self.word_wrap_var.set(True)
-            self.save_config()  # Save interval change
-            self.log("Đã áp dụng cấu hình: Cân Bằng (150ms cập nhật)")
+            self.keep_history_var.set(False)  # No history for balanced
+            # Không save config và không apply ngay - chỉ set giá trị vào UI vars
+            self.log("Đã chọn cấu hình: Cân Bằng. Nhấn 'Áp Dụng' để áp dụng.")
         elif preset_type == 'quality':
             # Quality optimized: best readability, slightly slower for accuracy
             self.update_interval = 0.2  # 200ms for quality (default)
@@ -1575,10 +1918,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.padding_y_var.set("20")
             self.border_width_var.set("1")
             self.border_color_var.set("#ffffff")
-            self.text_shadow_var.set(True)
             self.word_wrap_var.set(True)
-            self.save_config()  # Save interval change
-            self.log("Đã áp dụng cấu hình: Tối Ưu Chất Lượng (200ms cập nhật)")
+            self.keep_history_var.set(False)  # No history for quality
+            # Không save config và không apply ngay - chỉ set giá trị vào UI vars
+            self.log("Đã chọn cấu hình: Tối Ưu Chất Lượng. Nhấn 'Áp Dụng' để áp dụng.")
         elif preset_type == 'default':
             # Default settings (optimized defaults)
             self.update_interval = 0.2  # 200ms default
@@ -1602,14 +1945,33 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.padding_y_var.set("18")
             self.border_width_var.set("0")
             self.border_color_var.set("#ffffff")
-            self.text_shadow_var.set(False)
             self.word_wrap_var.set(True)
-            self.save_config()  # Save interval change
-            self.log("Đã áp dụng cấu hình: Mặc Định (200ms cập nhật)")
+            self.keep_history_var.set(False)  # No history for default
+            # Không save config và không apply ngay - chỉ set giá trị vào UI vars
+            self.log("Đã chọn cấu hình: Mặc Định. Nhấn 'Áp Dụng' để áp dụng.")
     
     def reset_all_settings(self):
-        """Reset all overlay settings to defaults including position"""
+        """Reset all settings to defaults except OCR engine, translation service, and DeepL key"""
         try:
+            # Reset update interval to default (200ms)
+            self.update_interval = 0.2
+            self.base_scan_interval = int(self.update_interval * 1000)  # 200ms
+            self.current_scan_interval = self.base_scan_interval
+            
+            # Reset source and target languages to defaults
+            self.source_language = "eng"
+            self.target_language = "vi"
+            
+            # KHÔNG reset capture region - giữ nguyên vùng đã chọn
+            
+            # Reset Tesseract path (người dùng cần chọn lại nếu cần)
+            self.custom_tesseract_path = None
+            # Reset pytesseract path về auto-detect
+            try:
+                pytesseract.pytesseract.tesseract_cmd = None
+            except Exception as e:
+                log_error("Error resetting Tesseract path", e)
+            
             # Reset to default values (optimized defaults)
             self.overlay_font_size = 15
             self.overlay_font_family = "Arial"
@@ -1627,14 +1989,45 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             self.overlay_padding_y = 18
             self.overlay_border_width = 0
             self.overlay_border_color = "#ffffff"
-            self.overlay_text_shadow = False
             self.overlay_word_wrap = True
+            self.overlay_keep_history = False
             
             # Reset overlay position to None (will use original position calculation)
             self.overlay_position_x = None
             self.overlay_position_y = None
             
             # Update UI variables
+            if hasattr(self, 'interval_var'):
+                self.interval_var.set("200")  # Reset update interval to 200ms
+            if hasattr(self, 'source_lang_var'):
+                self.source_lang_var.set(self.source_language)
+            if hasattr(self, 'target_lang_var'):
+                self.target_lang_var.set(self.target_language)
+            # Cập nhật translator với target language mới
+            try:
+                self.translator = GoogleTranslator(source='auto', target=self.target_language)
+            except Exception as e:
+                log_error("Error updating translator after reset", e)
+            # Cập nhật handlers với source language mới
+            if self.tesseract_handler:
+                try:
+                    self.tesseract_handler.set_source_language(self.source_language)
+                except Exception as e:
+                    log_error("Error updating Tesseract handler after reset", e)
+            if self.easyocr_handler:
+                try:
+                    self.easyocr_handler.set_source_language(self.source_language)
+                except Exception as e:
+                    log_error("Error updating EasyOCR handler after reset", e)
+            # Cập nhật Tesseract path display
+            if hasattr(self, 'tesseract_path_label'):
+                try:
+                    self.tesseract_path_label.config(
+                        text="Đường dẫn: Tự động phát hiện (PATH)",
+                        fg="green"
+                    )
+                except Exception as e:
+                    log_error("Error updating Tesseract path label after reset", e)
             if hasattr(self, 'font_size_var'):
                 self.font_size_var.set(str(self.overlay_font_size))
             if hasattr(self, 'font_family_var'):
@@ -1667,10 +2060,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 self.border_width_var.set(str(self.overlay_border_width))
             if hasattr(self, 'border_color_var'):
                 self.border_color_var.set(self.overlay_border_color)
-            if hasattr(self, 'text_shadow_var'):
-                self.text_shadow_var.set(self.overlay_text_shadow)
             if hasattr(self, 'word_wrap_var'):
                 self.word_wrap_var.set(self.overlay_word_wrap)
+            if hasattr(self, 'keep_history_var'):
+                self.keep_history_var.set(self.overlay_keep_history)
             
             # Tạo lại overlay nếu có để áp dụng reset vị trí
             if self.overlay_window:
@@ -1679,8 +2072,17 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 except Exception as e:
                     log_error("Error recreating overlay after reset", e)
             
-            self.log("Đã đặt lại tất cả cài đặt về mặc định (bao gồm vị trí màn hình dịch)")
-            messagebox.showinfo("Thành công", "Đã đặt lại tất cả cài đặt về mặc định.\nVị trí màn hình dịch đã được đặt lại về vị trí ban đầu.\nNhấn 'Áp Dụng' để áp dụng thay đổi.")
+            self.log("Đã đặt lại tất cả cài đặt về mặc định (trừ Engine OCR, Dịch vụ dịch, DeepL key và vùng capture)")
+            messagebox.showinfo(
+                "Thành công", 
+                "Đã đặt lại tất cả cài đặt về mặc định.\n\n"
+                "Không reset:\n"
+                "- Engine OCR (giữ nguyên)\n"
+                "- Dịch vụ dịch (giữ nguyên)\n"
+                "- DeepL API Key (giữ nguyên)\n"
+                "- Vùng chụp màn hình (giữ nguyên)\n\n"
+                "Nhấn 'Áp Dụng' để áp dụng thay đổi."
+            )
         except Exception as e:
             log_error("Error resetting settings", e)
             self.log(f"Lỗi khi đặt lại cài đặt: {e}")
@@ -1742,8 +2144,9 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             
             # Update checkboxes
             self.overlay_show_original = self.show_original_var.get()
-            self.overlay_text_shadow = self.text_shadow_var.get()
+            self.overlay_text_shadow = False  # Đã xóa option, luôn False
             self.overlay_word_wrap = self.word_wrap_var.get()
+            self.overlay_keep_history = self.keep_history_var.get()
             
             # Update text alignment
             self.overlay_text_align = self.text_align_var.get()
@@ -1772,6 +2175,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 log_error("Error showing messagebox", e)
             return
         
+        # Check if Tesseract is ready (if using Tesseract engine)
+        if not self.ensure_tesseract_ready():
+            return
+        
         self.is_capturing = True
         self.is_running = True  # Flag cho threads
         self.start_button.config(state=tk.DISABLED)
@@ -1784,6 +2191,7 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         self.last_displayed_translation_sequence = 0
         self.active_ocr_calls.clear()
         self.active_translation_calls.clear()
+        self.last_easyocr_call_time = 0.0  # Reset EasyOCR throttle
         
         # Clear queues
         while not self.ocr_queue.empty():
@@ -1799,6 +2207,20 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         # Create overlay window
         self.create_overlay()
+        
+        # Điều chỉnh thread pool dựa trên OCR engine (EasyOCR cần ít workers hơn)
+        if self.ocr_engine == "easyocr":
+            # EasyOCR: giảm workers để giảm CPU (rất nặng)
+            ocr_workers = 2
+            if hasattr(self.ocr_thread_pool, '_max_workers') and self.ocr_thread_pool._max_workers != ocr_workers:
+                self.ocr_thread_pool.shutdown(wait=False)
+                self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
+        else:
+            # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
+            ocr_workers = 8
+            if hasattr(self.ocr_thread_pool, '_max_workers') and self.ocr_thread_pool._max_workers != ocr_workers:
+                self.ocr_thread_pool.shutdown(wait=False)
+                self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
         
         # Start 3 threads riêng biệt
         self.capture_thread = threading.Thread(target=self.run_capture_thread, daemon=True)
@@ -1822,18 +2244,26 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             if thread and thread.is_alive():
                 try:
                     thread.join(timeout=1.0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log_error("Error joining thread", e)
         
         # Shutdown thread pools
         try:
             self.ocr_thread_pool.shutdown(wait=False)
             self.translation_thread_pool.shutdown(wait=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log_error("Error shutting down thread pools", e)
         
         # Giải phóng OCR engines với suppress warnings
-        if self.easyocr_reader is not None:
+        # Cleanup handlers nếu có
+        if self.easyocr_handler:
+            try:
+                self.easyocr_handler.cleanup()
+            except Exception as e:
+                log_error("Error cleaning up EasyOCR handler", e)
+        
+        # Cleanup easyocr_reader nếu có (fallback khi không dùng handlers)
+        if hasattr(self, 'easyocr_reader') and self.easyocr_reader is not None:
             try:
                 import sys
                 from io import StringIO
@@ -1848,12 +2278,14 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                         self.easyocr_reader = None
                 finally:
                     sys.stderr = old_stderr
-            except Exception:
-                pass
+            except Exception as e:
+                log_error("Error cleaning up EasyOCR reader (fallback)", e)
         
         # Recreate thread pools for next run
-        # Tăng thread pool size để xử lý nhanh hơn
-        self.ocr_thread_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="OCR")
+        # EasyOCR: giảm workers để giảm CPU (rất nặng)
+        # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
+        ocr_workers = 2 if self.ocr_engine == "easyocr" else 8
+        self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
         self.translation_thread_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="Translation")
         
         self.start_button.config(state=tk.NORMAL)
@@ -1881,16 +2313,48 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             except queue.Empty:
                 break
         
+        # Clear translation history in overlay nếu keep_history được bật (trước khi đóng window)
+        if self.overlay_keep_history and self.overlay_window:
+            try:
+                self.clear_translation_history()
+            except Exception as e:
+                log_error("Error clearing translation history on stop", e)
+        
         # Close overlay window
         if self.overlay_window:
             try:
                 self.overlay_window.destroy()
-            except Exception:
-                pass
+            except Exception as e:
+                log_error("Error destroying overlay window", e)
             self.overlay_window = None
-            self.shadow_label = None
         
         self.log("Đã dừng dịch.")
+    
+    def _periodic_cleanup(self):
+        """Periodic cleanup cho long sessions - giảm memory leak"""
+        try:
+            # Cleanup translation cache nếu quá lớn
+            if self.cache_manager:
+                # Cache manager tự quản lý LRU, không cần cleanup thủ công
+                pass
+            else:
+                # Fallback: cleanup translation_cache cũ
+                if len(self.translation_cache) > self.max_cache_size:
+                    keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
+                    for key in keys_to_remove:
+                        del self.translation_cache[key]
+            
+            # Trim text history
+            if len(self.text_history) > self.history_size:
+                self.text_history = self.text_history[-self.history_size:]
+            
+            # Force garbage collection nếu cần
+            import gc
+            cache_size = self.cache_manager.get_size() if self.cache_manager else len(self.translation_cache)
+            if cache_size > self.max_cache_size * 0.8:
+                gc.collect()
+        except Exception as e:
+            log_error("Lỗi periodic cleanup", e)
     
     def create_overlay(self):
         """Tạo cửa sổ overlay trong suốt để hiển thị bản dịch"""
@@ -1913,9 +2377,8 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             overlay_x = x + w + 20
             overlay_y = y
         else:
-            # Căn giữa màn hình mặc định
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
+            # Căn giữa màn hình mặc định - sử dụng actual screen size
+            screen_width, screen_height = get_actual_screen_size()
             overlay_x = (screen_width - self.overlay_width) // 2
             overlay_y = (screen_height - self.overlay_height) // 2
         
@@ -1983,28 +2446,6 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         # Calculate wraplength (account for padding and border)
         padding_total = (self.overlay_padding_x * 2) + (self.overlay_border_width * 2) + 20
         wraplength = self.overlay_width - padding_total if self.overlay_word_wrap else 0
-        
-        # Text shadow effect (using multiple labels for shadow)
-        self.shadow_label = None
-        if self.overlay_text_shadow:
-            # Shadow label (behind main text)
-            self.shadow_label = tk.Label(
-                translation_frame,
-                text="Đang chờ văn bản...",
-                font=font_tuple,
-                bg=self.overlay_bg_color,
-                fg="#000000",  # Black shadow
-                wraplength=wraplength,
-                justify=justify_option,
-                anchor='nw' if justify_option == tk.LEFT else 'center',
-                padx=7,  # Offset for shadow
-                pady=10,
-                relief=tk.FLAT
-            )
-            self.shadow_label.place(x=2, y=2)  # Position shadow slightly offset
-            # Make shadow draggable too
-            self.shadow_label.bind('<Button-1>', self.on_overlay_click)
-            self.shadow_label.bind('<B1-Motion>', self.on_overlay_motion)
         
         # Use Text widget with scrollbar for scrollable translation
         text_frame = tk.Frame(translation_frame, bg=self.overlay_bg_color)
@@ -2242,9 +2683,8 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             new_height = max(100, self.overlay_resize_start_height - dy)
             new_y = self._resize_start_win_y + dy
         
-        # Lấy kích thước màn hình
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
+        # Lấy kích thước màn hình - sử dụng actual screen size
+        screen_width, screen_height = get_actual_screen_size()
         
         # Giới hạn vị trí để giữ cửa sổ trên màn hình
         # Đảm bảo cửa sổ không ra ngoài cạnh phải
@@ -2354,8 +2794,9 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         try:
             if self.translation_text.tag_ranges(tk.SEL):
                 return
-        except:
-            pass
+        except Exception as e:
+            # Tkinter có thể raise exception nếu widget không còn tồn tại
+            log_error("Error checking text selection in overlay drag", e)
         
         # Otherwise, drag the window
         if self.overlay_window:
@@ -2365,6 +2806,21 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             # Cập nhật vị trí đã lưu
             self.overlay_position_x = x
             self.overlay_position_y = y
+    
+    def scale_for_ocr(self, img):
+        """
+        Scale ảnh nhỏ lên nếu < 300px để Tesseract đọc tốt hơn
+        Chỉ nhận numpy array (được gọi trong ocr_region_with_confidence)
+        """
+        if img is None or img.size == 0:
+            return img
+        h, w = img.shape[:2]
+        min_dim = 300
+        if h < min_dim or w < min_dim:
+            scale_factor = max(min_dim / h, min_dim / w)
+            scaled = cv2.resize(img, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+            return scaled
+        return img
     
     def preprocess_image(self, img, mode='adaptive', block_size=41, c_value=-60):
         """
@@ -2459,10 +2915,10 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
     
     def perform_ocr(self, processed_images, scale_factor, confidence_threshold=50):
         """
-        Thực hiện OCR trên ảnh đã xử lý, chọn kết quả tốt nhất dựa trên độ tin cậy
-        Hỗ trợ Tesseract và EasyOCR
+        Thực hiện OCR trên ảnh đã xử lý - chỉ free engines
+        Hỗ trợ Tesseract và EasyOCR (không rate limit)
         """
-        # Chọn engine OCR
+        # Chọn engine OCR - chỉ free engines
         if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
             return self.perform_easyocr(processed_images)
         else:
@@ -2470,8 +2926,15 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             return self.perform_tesseract_ocr(processed_images, confidence_threshold)
     
     def perform_easyocr(self, processed_images):
-        """Thực hiện OCR bằng EasyOCR"""
+        """Thực hiện OCR bằng EasyOCR - tối ưu CPU"""
         try:
+            # Throttle: EasyOCR rất nặng CPU, chỉ gọi mỗi 0.8s
+            now = time.monotonic()
+            time_since_last_call = now - self.last_easyocr_call_time
+            if time_since_last_call < self.easyocr_min_interval:
+                # Skip call này để giảm CPU
+                return ""
+            
             # Khởi tạo reader nếu chưa có
             reader = self.initialize_easyocr_reader()
             if reader is None:
@@ -2481,14 +2944,25 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             # Sử dụng ảnh đầu tiên (đã được xử lý tốt nhất)
             img = processed_images[0]
             
-            # EasyOCR yêu cầu numpy array
+            # Resize ảnh nhỏ hơn để giảm CPU (EasyOCR vẫn chính xác với ảnh nhỏ)
+            # Giữ max dimension <= 800px để giảm ~50% CPU
             if isinstance(img, np.ndarray):
-                img_array = img
-            else:
-                # Convert PIL Image to numpy array
-                img_array = np.array(img)
+                # Convert numpy array to PIL để resize dễ hơn
+                img = Image.fromarray(img)
+            
+            # PIL Image - resize nếu cần
+            w, h = img.size
+            max_dim = max(w, h)
+            if max_dim > 800:
+                scale = 800 / max_dim
+                new_w, new_h = int(w * scale), int(h * scale)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            # Convert PIL Image to numpy array cho EasyOCR
+            img_array = np.array(img)
             
             # Thực hiện OCR
+            self.last_easyocr_call_time = time.monotonic()
             results = reader.readtext(img_array)
             
             # Trích xuất text từ kết quả
@@ -2509,87 +2983,78 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             log_error("Lỗi EasyOCR", e)
             return ""
     
-    def perform_tesseract_ocr(self, processed_images, confidence_threshold=50):
+    def preprocess_for_ocr_cv(self, img, mode='adaptive', block_size=41, c_value=-60):
         """
-        Thực hiện OCR bằng Tesseract
+        Preprocess image cho OCR
+        Chỉ trả về 1 ảnh đã processed, không phải list
         """
-        best_text = ""
-        best_confidence = 0
+        if img is None or img.size == 0:
+            return np.zeros((10, 10), dtype=np.uint8)
         
-        # PSM modes tối ưu: ưu tiên hiệu quả nhất cho hội thoại
-        # PSM 6 tốt nhất cho khối đồng nhất (hầu hết hội thoại game)
-        psm_modes = [6, 7]  # 6=khối đồng nhất, 7=dòng đơn
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img.copy()
         
-        # Lấy config cho gaming mode (phù hợp với hội thoại game)
-        gaming_config = self.get_tesseract_config('gaming')
-        subtitle_config = self.get_tesseract_config('subtitle')
-        
-        # Thử với confidence scoring - thứ tự tối ưu cho tốc độ
-        for img_idx, img in enumerate(processed_images):
-            # Thử gaming config trước (tốt nhất cho hội thoại)
-            configs_to_try = [
-                (gaming_config, 'gaming'),
-                (subtitle_config, 'subtitle'),
-                ('--psm 6 --oem 3', 'general')
-            ]
+        try:
+            if mode == 'adaptive':
+                # Đảm bảo block_size là số lẻ
+                if block_size % 2 == 0:
+                    block_size += 1
+                processed = cv2.adaptiveThreshold(
+                    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY_INV, block_size, c_value
+                )
+            elif mode == 'binary':
+                _, processed = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+            elif mode == 'binary_inv':
+                _, processed = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            elif mode == 'none':
+                processed = gray
+            else:
+                processed = gray
             
-            for config, config_name in configs_to_try:
-                try:
-                    # Lấy văn bản với dữ liệu confidence
-                    data = pytesseract.image_to_data(
-                        img,
-                        lang=self.source_language,
-                        config=config,
-                        output_type=pytesseract.Output.DICT
-                    )
-                    
-                    # Trích xuất văn bản và tính confidence trung bình
-                    words = []
-                    confidences = []
-                    for i in range(len(data['text'])):
-                        text = data['text'][i].strip()
-                        conf = float(data['conf'][i])
-                        # Chỉ lấy text có confidence >= threshold
-                        if text and conf >= confidence_threshold:
-                            words.append(text)
-                            confidences.append(conf)
-                    
-                    if words:
-                        text = ' '.join(words).strip()
-                        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-                        
-                        if text and len(text) > 2:
-                            cleaned = self.clean_ocr_text(text)
-                            if len(cleaned) > 2 and any(c.isalpha() for c in cleaned):
-                                # Dùng kết quả nếu confidence đủ cao hoặc tốt hơn kết quả trước
-                                if avg_confidence > 60 or (avg_confidence > best_confidence and avg_confidence > 30):
-                                    best_text = cleaned
-                                    best_confidence = avg_confidence
-                                    # Thoát sớm nếu confidence cao (>75)
-                                    if avg_confidence > 75:
-                                        return best_text
-                except Exception as e:
-                    log_error(f"OCR error with config {config_name}: {e}", e)
+            return processed
+        except Exception as e:
+            log_error(f"Preprocessing error (mode: {mode}): {e}", e)
+            return gray
+    
+    def ocr_region_with_confidence(self, img, region, confidence_threshold=50):
+        """
+        OCR region với confidence filtering
+        Scale được gọi TRONG function này, không phải trước
+        """
+        x, y, w, h = region
+        if len(img.shape) == 3:
+            roi = img[y:y+h, x:x+w]
+        else:
+            roi = img[y:y+h, x:x+w]
+        
+        # Scale for OCR
+        scaled_roi = self.scale_for_ocr(roi)
+        
+        try:
+            # Dùng cached config
+            config = self.cached_tess_params if self.cached_tess_params else self.get_tesseract_config('gaming')
+            
+            data = pytesseract.image_to_data(
+                scaled_roi,
+                lang=self.source_language,
+                config=config,
+                output_type=pytesseract.Output.DICT
+            )
+            
+            filtered_text = []
+            for i in range(len(data['text'])):
+                if not data['text'][i].strip():
                     continue
-        
-        # Fallback: dùng image_to_string đơn giản nếu phương pháp confidence thất bại
-        if not best_text:
-            # Chỉ thử ảnh đầu tiên với PSM 6 (fallback nhanh nhất)
-            try:
-                text = pytesseract.image_to_string(
-                    processed_images[0],
-                    lang=self.source_language,
-                    config='--psm 6 --oem 3'
-                ).strip()
-                
-                if text and len(text) > 2:
-                    cleaned = self.clean_ocr_text(text)
-                    if len(cleaned) > 2 and any(c.isalpha() for c in cleaned):
-                        best_text = cleaned
-            except Exception as e:
-                log_error("OCR fallback error", e)
-        
-        return best_text.strip()
+                if float(data['conf'][i]) >= confidence_threshold:
+                    filtered_text.append(data['text'][i])
+            
+            return ' '.join(filtered_text)
+        except Exception as e:
+            log_error(f"OCR error in region {region}: {e}", e)
+            return ""
     
     def clean_ocr_text(self, text):
         """
@@ -2632,6 +3097,16 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         # Xóa khoảng trắng thừa (nhưng giữ newlines nếu có)
         cleaned = re.sub(r'[ \t]+', ' ', cleaned)
         
+        # Game-specific: fix character names (capitalize properly)
+        name_match = re.search(r'^([A-Za-z\s]+):', cleaned)
+        if name_match:
+            char_name = name_match.group(1).strip()
+            char_name = ' '.join(word.capitalize() for word in char_name.split())
+            cleaned = cleaned.replace(name_match.group(0), f"{char_name}:")
+        
+        # Fix spacing sau tên nhân vật (John:Text -> John: Text)
+        cleaned = re.sub(r'(\w+:)(\w)', r'\1 \2', cleaned)
+        
         # Xóa ký tự nhiễu ở đầu/cuối
         cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}', '', cleaned)
         cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}$', '', cleaned)
@@ -2644,23 +3119,30 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
     
     def remove_text_after_last_punctuation_mark(self, text):
         """
-        Xóa văn bản sau dấu câu cuối cùng
-        Giúp loại bỏ text nhiễu sau câu kết thúc
+        Xóa garbage sau dấu câu cuối
         """
         if not text:
             return text
+        
+        # Tìm dấu câu cuối cùng: . ! ? ... hoặc …
         pattern = r'[.!?]|\.{3}|…'
         matches = list(re.finditer(pattern, text))
         if not matches:
             return text
+        
         last_match = matches[-1]
         end_pos = last_match.end()
+        
+        # Xử lý ellipsis đặc biệt (...)
         if last_match.group() == ".":
+            # Check xem có phải ... không (2 dấu chấm tiếp theo)
             if end_pos + 2 <= len(text) and text[end_pos:end_pos+2] == "..":
                 end_pos += 2
+        
         return text[:end_pos]
     
     def post_process_translation_text(self, text):
+        """Post-process translation text"""
         """
         Xử lý text sau khi dịch
         """
@@ -2902,7 +3384,8 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         last_cap_time = 0.0
         last_cap_hash = None
-        min_interval = 0.03  # Giảm từ 0.05 xuống 0.03 (30ms) để capture nhanh hơn
+        # EasyOCR: tăng min_interval để giảm CPU (chậm hơn nhưng ổn định)
+        min_interval = 0.1 if self.ocr_engine == "easyocr" else 0.03
         similar_frames = 0
         current_scan_interval_sec = min_interval
         
@@ -2910,11 +3393,13 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             now = time.monotonic()
             try:
                 # Adaptive scan interval based on queue load
+                # EasyOCR: tăng interval base để giảm CPU
+                base_interval = self.update_interval * 1.5 if self.ocr_engine == "easyocr" else self.update_interval
                 q_fullness = self.ocr_queue.qsize() / (self.ocr_queue.maxsize or 1)
                 if q_fullness > 0.7:
-                    current_scan_interval_sec = self.update_interval * (1 + q_fullness)
+                    current_scan_interval_sec = base_interval * (1 + q_fullness)
                 elif q_fullness > 0.4:
-                    current_scan_interval_sec = self.update_interval * 1.25
+                    current_scan_interval_sec = base_interval * 1.25
                 else:
                     current_scan_interval_sec = max(min_interval, current_scan_interval_sec * 0.95)
                 
@@ -2950,13 +3435,19 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 )
                 img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
                 
-                # Tesseract-specific deduplication
+                # Deduplication: EasyOCR cần skip aggressive hơn (rất nặng CPU)
                 if img_hash == last_cap_hash:
                     similar_frames += 1
-                    skip_probability = min(0.95, 0.5 + (similar_frames * 0.05))
-                    if random.random() < skip_probability:
-                        time.sleep(min(0.1, current_scan_interval_sec * 0.5))
+                    if self.ocr_engine == "easyocr":
+                        # EasyOCR: skip 100% duplicate frames để giảm CPU
+                        time.sleep(min(0.2, current_scan_interval_sec))
                         continue
+                    else:
+                        # Tesseract: probability skip
+                        skip_probability = min(0.95, 0.5 + (similar_frames * 0.05))
+                        if random.random() < skip_probability:
+                            time.sleep(min(0.1, current_scan_interval_sec * 0.5))
+                            continue
                 else:
                     similar_frames = 0
                 last_cap_hash = img_hash
@@ -2977,15 +3468,25 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         try:
             log_error("WT: Capture thread finished.", None)
-        except:
-            pass
+        except Exception as e:
+            # Fallback: print to stderr if log_error fails
+            try:
+                import sys
+                sys.stderr.write(f"Error logging capture thread finish: {e}\n")
+            except:
+                pass
     
     def run_ocr_thread(self):
         """OCR thread - lấy từ queue, xử lý OCR, gọi async translation"""
         try:
             log_error("WT: OCR thread started.", None)
-        except:
-            pass
+        except Exception as e:
+            # Fallback: print to stderr if log_error fails
+            try:
+                import sys
+                sys.stderr.write(f"Error logging OCR thread start: {e}\n")
+            except:
+                pass
         last_ocr_proc_time = 0
         min_ocr_interval = 0.05  # Giảm từ 0.1 xuống 0.05 để xử lý nhanh hơn
         similar_texts_count = 0
@@ -2993,6 +3494,13 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         while self.is_running:
             now = time.monotonic()
+            
+            # Periodic cleanup cho long sessions (mỗi 5 phút)
+            current_time = time.time()
+            if current_time - self.last_cleanup_time > self.cleanup_interval:
+                self._periodic_cleanup()
+                self.last_cleanup_time = current_time
+            
             try:
                 # Adaptive OCR interval based on queue size
                 q_sz = self.ocr_queue.qsize()
@@ -3020,33 +3528,110 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 ocr_proc_start_time = time.monotonic()
                 last_ocr_proc_time = ocr_proc_start_time
                 
-                # Tiền xử lý ảnh
-                processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
-                
-                # OCR
-                text = self.perform_ocr(processed_images, scale_factor, confidence_threshold=50)
-                
-                # Xử lý text
-                if text:
-                    # Bỏ check punctuation strict - có thể bỏ qua text hợp lệ
-                    # Chỉ remove trailing garbage nếu có punctuation
-                    text = self.remove_text_after_last_punctuation_mark(text)
+                # OCR - sử dụng handlers nếu có, fallback về code cũ
+                if self.ocr_engine == "tesseract" and self.tesseract_handler:
+                    # Sử dụng Tesseract Handler
+                    img_np = np.array(img)
+                    img_shape = img_np.shape
+                    
+                    # Convert to BGR
+                    if len(img_shape) == 3:
+                        if img_shape[2] == 3:
+                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+                        elif img_shape[2] == 4:
+                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+                        else:
+                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_BGR2BGR)
+                    elif len(img_shape) == 2:
+                        img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+                    else:
+                        img_cv_bgr = img_np
+                    
+                    # OCR với handler (adaptive mode, gaming config)
+                    ocr_raw_text = self.tesseract_handler.recognize(
+                        img_cv_bgr, 
+                        prep_mode='adaptive', 
+                        block_size=41, 
+                        c_value=-60,
+                        confidence_threshold=50
+                    )
+                    
+                    # Post-process text
+                    text = self.clean_ocr_text(ocr_raw_text)
+                    
+                    # Apply linebreak conversion
+                    text = text.replace('\n', ' ')
+                    
+                    # Remove trailing garbage nếu có punctuation
+                    if text:
+                        pattern = r'[.!?]|\.{3}|…'
+                        if not list(re.finditer(pattern, text)):
+                            text = ""
+                        else:
+                            text = self.remove_text_after_last_punctuation_mark(text)
+                            
+                elif self.ocr_engine == "easyocr" and self.easyocr_handler:
+                    # Sử dụng EasyOCR Handler
+                    img_np = np.array(img)
+                    text = self.easyocr_handler.recognize(img_np, confidence_threshold=0.3)
+                    if text:
+                        text = self.clean_ocr_text(text)
+                else:
+                    # Fallback: code cũ (nếu handlers không available)
+                    if self.ocr_engine == "tesseract":
+                        # Convert PIL to numpy array
+                        img_np = np.array(img)
+                        img_shape = img_np.shape
+                        
+                        if len(img_shape) == 3:
+                            if img_shape[2] == 3:
+                                img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+                            elif img_shape[2] == 4:
+                                img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+                            else:
+                                img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_BGR2BGR)
+                        elif len(img_shape) == 2:
+                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+                        else:
+                            img_cv_bgr = img_np
+                        
+                        processed_cv_img = self.preprocess_for_ocr_cv(img_cv_bgr, mode='adaptive', block_size=41, c_value=-60)
+                        
+                        if self.cached_prep_mode != 'adaptive':
+                            self.cached_prep_mode = 'adaptive'
+                            self.cached_tess_params = self.get_tesseract_config('gaming')
+                        
+                        full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
+                        ocr_raw_text = self.ocr_region_with_confidence(processed_cv_img, full_img_region, confidence_threshold=50)
+                        text = self.clean_ocr_text(ocr_raw_text)
+                        text = text.replace('\n', ' ')
+                        
+                        if text:
+                            pattern = r'[.!?]|\.{3}|…'
+                            if not list(re.finditer(pattern, text)):
+                                text = ""
+                            else:
+                                text = self.remove_text_after_last_punctuation_mark(text)
+                    else:
+                        # EasyOCR fallback
+                        processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
+                        text = self.perform_easyocr(processed_images)
                 
                 if not text or self.is_placeholder_text(text):
                     self.text_stability_counter = 0
                     self.previous_text = ""
                     continue
                 
-                # Tính similarity (để tránh spam nhưng không quá strict)
+                # Tính similarity (0.9 threshold)
                 similarity = self.calculate_text_similarity(text, prev_ocr_text)
-                if similarity > 0.95:  # Chỉ skip nếu gần như giống hệt (0.95 thay vì 0.9)
+                if similarity > 0.9:
                     similar_texts_count += 1
                 else:
                     similar_texts_count = 0
                     prev_ocr_text = text
                 
-                # Skip nếu có quá nhiều text tương tự (giảm threshold từ 2 xuống 3 và time từ 1.0 xuống 0.5)
-                if similar_texts_count > 3 and (now - self.last_successful_translation_time) < 0.5:
+                # Skip nếu có quá nhiều text tương tự (> 2 và < 1.0s)
+                if similar_texts_count > 2 and (now - self.last_successful_translation_time) < 1.0:
                     continue
                 
                 # Kiểm tra text stability
@@ -3096,15 +3681,25 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         try:
             log_error("WT: OCR thread finished.", None)
-        except:
-            pass
+        except Exception as e:
+            # Fallback: print to stderr if log_error fails
+            try:
+                import sys
+                sys.stderr.write(f"Error logging OCR thread finish: {e}\n")
+            except:
+                pass
     
     def run_translation_thread(self):
         """Translation thread - xử lý translation từ queue (legacy, ít dùng)"""
         try:
             log_error("WT: Translation thread started.", None)
-        except:
-            pass
+        except Exception as e:
+            # Fallback: print to stderr if log_error fails
+            try:
+                import sys
+                sys.stderr.write(f"Error logging translation thread start: {e}\n")
+            except:
+                pass
         
         while self.is_running:
             try:
@@ -3124,8 +3719,13 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
         
         try:
             log_error("WT: Translation thread finished.", None)
-        except:
-            pass
+        except Exception as e:
+            # Fallback: print to stderr if log_error fails
+            try:
+                import sys
+                sys.stderr.write(f"Error logging translation thread finish: {e}\n")
+            except:
+                pass
     
     def start_async_translation(self, text_to_translate, ocr_sequence_number):
         """Start async translation processing"""
@@ -3155,17 +3755,25 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 return
             
             if clean_text and len(clean_text) > 2:
-                cache_key = clean_text.lower().strip()
+                # Check cache - sử dụng cache_manager nếu có
+                translated_text = None
+                translator_name = 'deepl' if self.use_deepl else 'google'
                 
-                # Check cache
-                if cache_key in self.translation_cache:
-                    translated_text = self.translation_cache[cache_key]
+                if self.cache_manager:
+                    # Sử dụng cache_manager (LRU + file cache)
+                    translated_text = self.cache_manager.get(clean_text, self.source_language, self.target_language, translator_name)
                 else:
-                    # Translate
+                    # Fallback: dùng translation_cache cũ
+                    cache_key = clean_text.lower().strip()
+                    if cache_key in self.translation_cache:
+                        translated_text = self.translation_cache[cache_key]
+                
+                if not translated_text:
+                    # Translate - chỉ free services
                     max_retries = 2
-                    translated_text = None
                     for attempt in range(max_retries):
                         try:
+                            # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
                             if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
                                 translated_text = self.translate_with_deepl(clean_text)
                             else:
@@ -3188,13 +3796,22 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                     if translated_text and not self.is_error_message(translated_text):
                         translated_text = self.post_process_translation_text(translated_text)
                         translated_text = self.format_dialog_text(translated_text)
-                        self.translation_cache[cache_key] = translated_text
                         
-                        # Limit cache size
-                        if len(self.translation_cache) > 1000:
-                            keys_to_remove = list(self.translation_cache.keys())[:200]
-                            for key in keys_to_remove:
-                                del self.translation_cache[key]
+                        # Store in cache
+                        if self.cache_manager:
+                            # Sử dụng cache_manager
+                            self.cache_manager.store(clean_text, self.source_language, self.target_language, translated_text, translator_name)
+                        else:
+                            # Fallback: dùng translation_cache cũ
+                            cache_key = clean_text.lower().strip()
+                            self.translation_cache[cache_key] = translated_text
+                            
+                            # Limit cache size - tối ưu cho long sessions
+                            if len(self.translation_cache) > self.max_cache_size:
+                                # Xóa 20% cache cũ nhất (LRU-like)
+                                keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
+                                for key in keys_to_remove:
+                                    del self.translation_cache[key]
                 
                 # Process translation response với chronological ordering
                 # QUAN TRỌNG: Luôn gọi process_translation_response để đảm bảo chronological ordering
@@ -3285,32 +3902,55 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
             return
         
         try:
-            # Cập nhật shadow label nếu có
-            if self.shadow_label:
-                try:
-                    self.shadow_label.config(text=translated)
-                except Exception as e:
-                    log_error("Error updating shadow label in overlay", e)
-            
             # Cập nhật text widget bản dịch (có thể cuộn)
             if hasattr(self, 'translation_text') and self.translation_text:
                 try:
                     self.translation_text.config(state=tk.NORMAL)
-                    self.translation_text.delete('1.0', tk.END)
-                    self.translation_text.insert('1.0', translated)
+                    
+                    if self.overlay_keep_history:
+                        # Append mode: thêm bản dịch mới vào cuối với spacing (không dùng ký tự)
+                        current_text = self.translation_text.get('1.0', tk.END).strip()
+                        if current_text and current_text != "Đang chờ văn bản...":
+                            # Thêm spacing (2 dòng trống) và text mới
+                            spacing = "\n\n"
+                            self.translation_text.insert(tk.END, spacing + translated)
+                        else:
+                            # Lần đầu tiên, chỉ insert text
+                            self.translation_text.delete('1.0', tk.END)
+                            self.translation_text.insert('1.0', translated)
+                        # Auto-scroll to bottom để xem text mới nhất
+                        self.translation_text.see(tk.END)
+                    else:
+                        # Replace mode: thay thế toàn bộ text
+                        self.translation_text.delete('1.0', tk.END)
+                        self.translation_text.insert('1.0', translated)
+                        # Auto-scroll to top
+                        self.translation_text.see('1.0')
+                    
                     self.translation_text.config(state=tk.DISABLED)
-                    # Auto-scroll to top
-                    self.translation_text.see('1.0')
                 except Exception as e:
                     log_error("Error updating translation text widget", e)
             elif hasattr(self, 'translation_label') and self.translation_label:
                 # Fallback về label nếu text widget không tồn tại
                 try:
-                    self.translation_label.config(text=translated)
+                    if self.overlay_keep_history:
+                        # Append cho label (giới hạn độ dài)
+                        current_text = self.translation_label.cget('text')
+                        if current_text and current_text != "Đang chờ văn bản...":
+                            # Dùng spacing (2 dòng trống) thay vì ký tự
+                            new_text = current_text + "\n\n" + translated
+                            # Giới hạn độ dài để tránh quá dài
+                            if len(new_text) > 2000:
+                                new_text = new_text[-1500:]  # Giữ 1500 ký tự cuối
+                            self.translation_label.config(text=new_text)
+                        else:
+                            self.translation_label.config(text=translated)
+                    else:
+                        self.translation_label.config(text=translated)
                 except Exception as e:
                     log_error("Error updating translation label", e)
             
-            # Update original text if enabled
+            # Update original text if enabled (chỉ hiển thị text gốc mới nhất)
             if self.overlay_show_original and hasattr(self, 'original_label') and self.original_label:
                 try:
                     # Truncate if too long, but show more characters
@@ -3340,7 +3980,15 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                 self.stop_translation()
             
             # Giải phóng OCR engines khi đóng ứng dụng
-            if self.easyocr_reader is not None:
+            # Cleanup handlers nếu có
+            if self.easyocr_handler:
+                try:
+                    self.easyocr_handler.cleanup()
+                except Exception as e:
+                    log_error("Error cleaning up EasyOCR handler in on_closing", e)
+            
+            # Cleanup easyocr_reader nếu có (fallback khi không dùng handlers)
+            if hasattr(self, 'easyocr_reader') and self.easyocr_reader is not None:
                 try:
                     import sys
                     from io import StringIO
@@ -3354,8 +4002,8 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
                             self.easyocr_reader = None
                     finally:
                         sys.stderr = old_stderr
-                except Exception:
-                    pass
+                except Exception as e:
+                    log_error("Error cleaning up EasyOCR reader", e)
             
             self.save_config()
         except Exception as e:
@@ -3373,7 +4021,7 @@ HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
 
 
 class RegionSelector:
-    """Công cụ tương tác để chọn vùng chụp màn hình"""
+    """Công cụ tương tác để chọn vùng chụp màn hình - hỗ trợ DPI scaling"""
     
     def __init__(self, parent, callback):
         self.parent = parent
@@ -3384,25 +4032,39 @@ class RegionSelector:
         self.end_y = None
         self.rect = None
         
+        # Get actual screen dimensions (handles DPI scaling correctly)
+        self.screen_width, self.screen_height = get_actual_screen_size()
+        
         # Create fullscreen transparent window
         self.selector = tk.Toplevel()
-        self.selector.attributes('-fullscreen', True)
-        self.selector.attributes('-alpha', 0.3)
+        self.selector.overrideredirect(True)  # Remove window decorations
         self.selector.attributes('-topmost', True)
+        self.selector.attributes('-alpha', 0.3)
         self.selector.configure(bg='black')
+        
+        # Set geometry explicitly to cover entire screen (fixes DPI scaling issue)
+        # Use negative offset to ensure coverage on all DPI settings
+        self.selector.geometry(f"{self.screen_width}x{self.screen_height}+0+0")
+        self.selector.state('normal')  # Don't use fullscreen, use explicit geometry
+        
+        # Ensure window is raised and focused
+        self.selector.lift()
+        self.selector.focus_force()
         
         # Create canvas for drawing selection
         self.canvas = tk.Canvas(
             self.selector,
+            width=self.screen_width,
+            height=self.screen_height,
             highlightthickness=0,
             bg='black',
             cursor="crosshair"
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Instructions
+        # Instructions - use actual screen width
         self.canvas.create_text(
-            self.selector.winfo_screenwidth() // 2,
+            self.screen_width // 2,
             50,
             text="Click and drag to select the dialogue box region. Press ESC to cancel.",
             fill='white',
@@ -3415,6 +4077,9 @@ class RegionSelector:
         self.canvas.bind("<B1-Motion>", self.on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
         self.selector.bind("<Escape>", self.cancel)
+        
+        # Update to ensure geometry is applied
+        self.selector.update_idletasks()
         self.selector.focus_set()
     
     def on_button_press(self, event):

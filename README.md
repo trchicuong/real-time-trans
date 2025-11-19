@@ -11,6 +11,8 @@ Tool Python mã nguồn mở giúp dịch văn bản thời gian thực trên m�
 - 📍 **Tự động lưu cài đặt**: Vị trí, kích thước, và tất cả cài đặt
 - 🔒 **Khóa màn hình dịch**: Ngăn di chuyển nhầm khi chơi game
 - 🌍 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ nguồn và đích
+- 💾 **Cache thông minh**: LRU cache và preset cache để giảm API calls và tăng tốc độ
+- 📜 **Lưu lịch sử dịch**: Tùy chọn lưu và xem lại các bản dịch trước đó
 
 ## Yêu Cầu
 
@@ -127,8 +129,9 @@ python translator.py
    - Chọn tab "Giao Diện Dịch"
    - Sử dụng các nút "Cấu Hình Nhanh" để chọn preset (Tối Ưu Tốc Độ, Cân Bằng, Tối Ưu Chất Lượng, Mặc Định)
    - Hoặc tùy chỉnh thủ công: cỡ chữ, phông chữ, màu sắc, kích thước, độ trong suốt, v.v.
+   - Tùy chọn "Lưu lịch sử dịch": Cho phép xem lại các bản dịch trước đó
    - Nhấn "Áp Dụng" sau khi thay đổi
-   - Nhấn "Đặt Lại Tất Cả" để reset về mặc định
+   - Nhấn "Đặt Lại Tất Cả" để reset về mặc định (KHÔNG reset vùng chụp màn hình, engine OCR, dịch vụ dịch và DeepL key)
 
 5. **Bắt Đầu Dịch**:
 
@@ -157,6 +160,21 @@ Công cụ tự động lưu cài đặt của bạn vào `config.json`:
 - Tất cả cài đặt tùy chỉnh giao diện (font, màu sắc, kích thước, v.v.)
 - Vị trí và kích thước màn hình dịch
 - Trạng thái khóa màn hình dịch
+- Tùy chọn lưu lịch sử dịch
+
+### Cache Files
+
+Công cụ tự động tạo và quản lý các file cache:
+
+- **`translation_cache.txt`**: Lưu cache các bản dịch đã thực hiện để giảm API calls
+- **`preset_cache.txt`**: File preset cache chứa các bản dịch phổ biến, được load khi khởi động để tăng tốc độ
+- **`error_log.txt`**: File log lỗi để debug (tự động tạo khi có lỗi)
+
+**Lưu ý cho Developer:**
+
+- Các file cache được lưu trong cùng thư mục với executable (khi build exe) hoặc thư mục chứa script
+- `preset_cache.txt` được bundle vào exe và tự động extract ra thư mục exe khi chạy lần đầu
+- Bạn có thể chỉnh sửa `preset_cache.txt` để thêm các bản dịch phổ biến cho ứng dụng của mình
 
 ## Đóng Gói Thành File Thực Thi (Packaging)
 
@@ -202,6 +220,8 @@ Script này sẽ:
 - File `.exe` sẽ khá lớn (khoảng 50-100MB) vì chứa toàn bộ Python và các thư viện
 - Người dùng vẫn cần cài đặt Tesseract OCR riêng
 - File `error_log.txt` sẽ được tạo tự động khi có lỗi xảy ra
+- File `preset_cache.txt` được bundle vào exe và tự động extract ra thư mục exe khi chạy lần đầu
+- File `translation_cache.txt` và `preset_cache.txt` được lưu trong cùng thư mục với exe
 
 ## Xử Lý Sự Cố
 
@@ -299,11 +319,11 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
 ## Chi Tiết Kỹ Thuật
 
 - **Chụp Màn Hình**: Sử dụng thư viện `mss` để chụp màn hình nhanh, hiệu quả
-- **Công Cụ OCR**: 
-  - Tesseract OCR qua `pytesseract` (mặc định)
-  - EasyOCR (tùy chọn, chính xác hơn cho một số ngôn ngữ)
+- **Công Cụ OCR**:
+  - Tesseract OCR qua `pytesseract` (mặc định) - được quản lý bởi `TesseractOCRHandler`
+  - EasyOCR (tùy chọn, chính xác hơn cho một số ngôn ngữ) - được quản lý bởi `EasyOCRHandler`
 - **Xử Lý Hình Ảnh**: OpenCV để tiền xử lý hình ảnh (adaptive thresholding, binary thresholding, grayscale conversion, intelligent scaling)
-- **Dịch Thuật**: 
+- **Dịch Thuật**:
   - Google Translate API qua `deep-translator` (miễn phí)
   - DeepL API (chất lượng cao, có phí)
 - **Giao Diện**: Tkinter (đã có sẵn trong Python)
@@ -311,25 +331,37 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
   - Thread chụp màn hình
   - Thread xử lý OCR
   - Thread xử lý dịch thuật
-- **Tối Ưu Hiệu Suất**: 
+- **Handlers Package**:
+  - `TesseractOCRHandler`: Quản lý Tesseract OCR với các kỹ thuật tối ưu (preprocessing, scaling, confidence filtering)
+  - `EasyOCRHandler`: Quản lý EasyOCR với tối ưu CPU (throttling, image resizing, lazy initialization)
+  - `TranslationCacheManager`: Quản lý translation cache với LRU cache và file persistence
+- **Tối Ưu Hiệu Suất**:
   - Xử lý song song với ThreadPoolExecutor
   - Tự động điều chỉnh tốc độ dựa trên tải
-  - Cache dịch thuật để giảm API calls
+  - LRU cache và file cache để giảm API calls
+  - Preset cache để load các bản dịch phổ biến khi khởi động
   - Image hashing để bỏ qua frame trùng lặp
+  - Throttling và deduplication để tránh rate limits
 
 ## 📁 Cấu Trúc Dự Án
 
 ```
 real-time-trans/
-├── translator.py
-├── package.py
-├── build.bat
-├── build.spec
-├── test_exe.py
-├── requirements.txt
+├── translator.py              # File chính chứa UI và logic chính
+├── handlers/                  # Package chứa các handlers cho OCR và cache
+│   ├── __init__.py
+│   ├── tesseract_ocr_handler.py    # Handler cho Tesseract OCR
+│   ├── easyocr_handler.py          # Handler cho EasyOCR
+│   └── cache_manager.py            # Handler quản lý translation cache
+├── package.py                # Script tự động build và package
+├── build.bat                 # Script build cho Windows
+├── build.spec                # File cấu hình PyInstaller
+├── test_exe.py              # Script kiểm tra dependencies
+├── requirements.txt          # Danh sách thư viện Python cần thiết
+├── preset_cache.txt          # File preset cache (bundle vào exe)
 ├── LICENSE
-├── README.md
-├── HUONG_DAN.txt
+├── README.md                 # File này (dành cho developer)
+├── HUONG_DAN.txt            # Hướng dẫn cho người dùng phổ thông
 ├── .gitignore
 └── .github/
 ```
@@ -339,17 +371,45 @@ real-time-trans/
 - **`translator.py`**: File chính chứa toàn bộ logic của công cụ:
 
   - Class `ScreenTranslator`: Quản lý UI, OCR, translation, và overlay window
-  - Function `find_tesseract()`: Tự động tìm Tesseract OCR
+  - Function `find_tesseract()`: Tự động tìm Tesseract OCR (hỗ trợ Windows, macOS, Linux)
+  - Function `get_base_dir()`: Lấy thư mục gốc (hỗ trợ cả script và exe)
   - Function `log_error()`: Ghi log lỗi ra file
   - Class `RegionSelector`: Tool chọn vùng màn hình
+
+- **`handlers/`**: Package chứa các handlers modular:
+
+  - **`tesseract_ocr_handler.py`**:
+
+    - Class `TesseractOCRHandler`: Quản lý Tesseract OCR với các kỹ thuật tối ưu
+    - Preprocessing: adaptive thresholding, binary thresholding, grayscale conversion
+    - Scaling: Tự động scale ảnh nhỏ lên để tăng độ chính xác
+    - Confidence filtering: Lọc kết quả OCR dựa trên confidence score
+    - Gaming-specific configs: Tối ưu cho game với whitelist characters
+
+  - **`easyocr_handler.py`**:
+
+    - Class `EasyOCRHandler`: Quản lý EasyOCR với tối ưu CPU
+    - Throttling: Giới hạn tần suất gọi EasyOCR để giảm CPU
+    - Image resizing: Resize ảnh để giảm tải xử lý
+    - Lazy initialization: Chỉ khởi tạo reader khi cần
+    - Reader reuse: Tái sử dụng reader để tránh reload model
+
+  - **`cache_manager.py`**:
+    - Class `TranslationCacheManager`: Quản lý translation cache
+    - LRU cache: In-memory cache với LRU eviction
+    - File cache: Persistent cache trong `translation_cache.txt`
+    - Preset cache: Load `preset_cache.txt` khi khởi động
+    - Hỗ trợ cả script và exe: Tự động detect và xử lý đúng đường dẫn
 
 - **`package.py`**: Script tự động build executable và tạo file zip phân phối
 
 - **`build.bat`**: Script build cho Windows, hỗ trợ cả Release và Debug build
 
-- **`build.spec`**: File cấu hình PyInstaller với đầy đủ hidden imports
+- **`build.spec`**: File cấu hình PyInstaller với đầy đủ hidden imports và bundle `preset_cache.txt`
 
 - **`test_exe.py`**: Script kiểm tra dependencies trước khi build exe
+
+- **`preset_cache.txt`**: File preset cache chứa các bản dịch phổ biến, được bundle vào exe và load khi khởi động
 
 ## 🛠️ Development
 
@@ -420,6 +480,18 @@ Dự án này sử dụng các thư viện mã nguồn mở:
 - [OpenCV](https://opencv.org/) - Apache License 2.0
 - [Pillow](https://python-pillow.org/) - PIL License
 - [mss](https://github.com/BoboTiG/python-mss) - MIT License
+- [EasyOCR](https://github.com/JaidedAI/EasyOCR) - Apache License 2.0 (tùy chọn)
+- [DeepL API](https://www.deepl.com/docs-api) - Proprietary (tùy chọn, có phí)
+
+### Kiến Trúc Code
+
+Dự án được tổ chức theo mô hình modular với handlers package:
+
+- **Separation of Concerns**: OCR logic được tách riêng vào handlers
+- **Easy Extension**: Dễ dàng thêm engine OCR mới bằng cách tạo handler mới
+- **Error Handling**: Tất cả lỗi được log vào `error_log.txt` để debug
+- **Path Handling**: Tự động detect và xử lý đúng đường dẫn cho cả script và exe
+- **Cache Strategy**: LRU cache + file cache + preset cache để tối ưu hiệu suất
 
 ## 🙏 Lời Cảm Ơn
 

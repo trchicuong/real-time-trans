@@ -1,0 +1,600 @@
+# Preset Translation Cache - Việt Nam <3
+
+google:eng:vi:Yes:==:Có
+google:eng:vi:No:==:Không
+google:eng:vi:OK:==:Đồng ý
+google:eng:vi:Cancel:==:Hủy
+google:eng:vi:Confirm:==:Xác nhận
+google:eng:vi:Continue:==:Tiếp tục
+google:eng:vi:Next:==:Tiếp theo
+google:eng:vi:Previous:==:Trước đó
+google:eng:vi:Back:==:Quay lại
+google:eng:vi:Return:==:Trở lại
+google:eng:vi:Save:==:Lưu
+google:eng:vi:Load:==:Tải
+google:eng:vi:Start:==:Bắt đầu
+google:eng:vi:End:==:Kết thúc
+google:eng:vi:Exit:==:Thoát
+google:eng:vi:Quit:==:Thoát game
+google:eng:vi:Close:==:Đóng
+google:eng:vi:Open:==:Mở
+google:eng:vi:Select:==:Chọn
+google:eng:vi:Choose:==:Lựa chọn
+google:eng:vi:Delete:==:Xóa
+google:eng:vi:Remove:==:Gỡ bỏ
+google:eng:vi:Edit:==:Chỉnh sửa
+google:eng:vi:New:==:Mới
+google:eng:vi:Old:==:Cũ
+google:eng:vi:View:==:Xem
+google:eng:vi:Details:==:Chi tiết
+google:eng:vi:Info:==:Thông tin
+google:eng:vi:Help:==:Trợ giúp
+google:eng:vi:About:==:Giới thiệu
+google:eng:vi:Credits:==:Đội ngũ sản xuất
+google:eng:vi:Main Menu:==:Menu chính
+google:eng:vi:Pause:==:Tạm dừng
+google:eng:vi:Resume:==:Tiếp tục
+google:eng:vi:Restart:==:Chơi lại
+google:eng:vi:Retry:==:Thử lại
+google:eng:vi:Skip:==:Bỏ qua
+google:eng:vi:Apply:==:Áp dụng
+google:eng:vi:Reset:==:Đặt lại
+google:eng:vi:Default:==:Mặc định
+google:eng:vi:Warning:==:Cảnh báo
+google:eng:vi:Error:==:Lỗi
+google:eng:vi:Success:==:Thành công
+google:eng:vi:Failed:==:Thất bại
+google:eng:vi:Completed:==:Hoàn thành
+google:eng:vi:Loading:==:Đang tải...
+google:eng:vi:Processing:==:Đang xử lý...
+google:eng:vi:Please wait:==:Vui lòng đợi
+google:eng:vi:Character:==:Nhân vật
+google:eng:vi:Name:==:Tên
+google:eng:vi:Level:==:Cấp độ
+google:eng:vi:Exp:==:Kinh nghiệm
+google:eng:vi:Experience:==:Kinh nghiệm
+google:eng:vi:HP:==:Máu
+google:eng:vi:Health:==:Máu
+google:eng:vi:MP:==:Mana
+google:eng:vi:Mana:==:Năng lượng
+google:eng:vi:Stamina:==:Thể lực
+google:eng:vi:Energy:==:Năng lượng
+google:eng:vi:Attack:==:Tấn công
+google:eng:vi:Defense:==:Phòng thủ
+google:eng:vi:Speed:==:Tốc độ
+google:eng:vi:Strength:==:Sức mạnh
+google:eng:vi:Intelligence:==:Trí tuệ
+google:eng:vi:Agility:==:Nhanh nhẹn
+google:eng:vi:Dexterity:==:Khéo léo
+google:eng:vi:Vitality:==:Sinh lực
+google:eng:vi:Luck:==:May mắn
+google:eng:vi:Charisma:==:Sức hút
+google:eng:vi:Wisdom:==:Sự khôn ngoan
+google:eng:vi:Endurance:==:Sức bền
+google:eng:vi:Critical Chance:==:Tỷ lệ chí mạng
+google:eng:vi:Critical Damage:==:Sát thương chí mạng
+google:eng:vi:Accuracy:==:Độ chính xác
+google:eng:vi:Evasion:==:Né tránh
+google:eng:vi:Resistance:==:Kháng
+google:eng:vi:Armor:==:Giáp
+google:eng:vi:Magic Resist:==:Kháng phép
+google:eng:vi:Class:==:Lớp nhân vật
+google:eng:vi:Race:==:Chủng tộc
+google:eng:vi:Gender:==:Giới tính
+google:eng:vi:Male:==:Nam
+google:eng:vi:Female:==:Nữ
+google:eng:vi:Status:==:Trạng thái
+google:eng:vi:Buff:==:Hiệu ứng tốt
+google:eng:vi:Debuff:==:Hiệu ứng xấu
+google:eng:vi:Inventory:==:Túi đồ
+google:eng:vi:Bag:==:Túi
+google:eng:vi:Storage:==:Kho
+google:eng:vi:Item:==:Vật phẩm
+google:eng:vi:Equipment:==:Trang bị
+google:eng:vi:Equip:==:Trang bị
+google:eng:vi:Unequip:==:Tháo
+google:eng:vi:Use:==:Sử dụng
+google:eng:vi:Discard:==:Vứt bỏ
+google:eng:vi:Drop:==:Vứt
+google:eng:vi:Pick up:==:Nhặt
+google:eng:vi:Weapon:==:Vũ khí
+google:eng:vi:Sword:==:Kiếm
+google:eng:vi:Shield:==:Khiên
+google:eng:vi:Bow:==:Cung
+google:eng:vi:Staff:==:Gậy phép
+google:eng:vi:Axe:==:Rìu
+google:eng:vi:Dagger:==:Dao găm
+google:eng:vi:Spear:==:Thương
+google:eng:vi:Armor:==:Áo giáp
+google:eng:vi:Helmet:==:Mũ
+google:eng:vi:Gloves:==:Găng tay
+google:eng:vi:Boots:==:Giày
+google:eng:vi:Accessory:==:Phụ kiện
+google:eng:vi:Ring:==:Nhẫn
+google:eng:vi:Necklace:==:Dây chuyền
+google:eng:vi:Potion:==:Thuốc
+google:eng:vi:Elixir:==:Thần dược
+google:eng:vi:Scroll:==:Cuộn giấy
+google:eng:vi:Map:==:Bản đồ
+google:eng:vi:Key:==:Chìa khóa
+google:eng:vi:Material:==:Nguyên liệu
+google:eng:vi:Loot:==:Chiến lợi phẩm
+google:eng:vi:Reward:==:Phần thưởng
+google:eng:vi:Chest:==:Rương
+google:eng:vi:Fight:==:Chiến đấu
+google:eng:vi:Battle:==:Trận chiến
+google:eng:vi:Attack:==:Tấn công
+google:eng:vi:Defend:==:Phòng thủ
+google:eng:vi:Dodge:==:Né tránh
+google:eng:vi:Block:==:Chặn
+google:eng:vi:Parry:==:Đỡ đòn
+google:eng:vi:Counter:==:Phản đòn
+google:eng:vi:Escape:==:Bỏ chạy
+google:eng:vi:Flee:==:Chạy trốn
+google:eng:vi:Skill:==:Kỹ năng
+google:eng:vi:Ability:==:Khả năng
+google:eng:vi:Spell:==:Phép thuật
+google:eng:vi:Cast:==:Thi triển
+google:eng:vi:Summon:==:Triệu hồi
+google:eng:vi:Target:==:Mục tiêu
+google:eng:vi:Enemy:==:Kẻ thù
+google:eng:vi:Ally:==:Đồng minh
+google:eng:vi:Boss:==:Trùm
+google:eng:vi:Monster:==:Quái vật
+google:eng:vi:Damage:==:Sát thương
+google:eng:vi:Heal:==:Hồi máu
+google:eng:vi:Revive:==:Hồi sinh
+google:eng:vi:Resurrect:==:Phục sinh
+google:eng:vi:Die:==:Chết
+google:eng:vi:Dead:==:Đã chết
+google:eng:vi:Kill:==:Giết
+google:eng:vi:Victory:==:Chiến thắng
+google:eng:vi:Defeat:==:Thất bại
+google:eng:vi:Draw:==:Hòa
+google:eng:vi:Game Over:==:Trò chơi kết thúc
+google:eng:vi:Cooldown:==:Hồi chiêu
+google:eng:vi:Stun:==:Choáng
+google:eng:vi:Silence:==:Câm lặng
+google:eng:vi:Slow:==:Làm chậm
+google:eng:vi:Root:==:Trói chân
+google:eng:vi:Fear:==:Hoảng sợ
+google:eng:vi:Burn:==:Bỏng
+google:eng:vi:Poison:==:Độc
+google:eng:vi:Freeze:==:Đóng băng
+google:eng:vi:Shop:==:Cửa hàng
+google:eng:vi:Store:==:Cửa hàng
+google:eng:vi:Market:==:Chợ
+google:eng:vi:Buy:==:Mua
+google:eng:vi:Sell:==:Bán
+google:eng:vi:Trade:==:Giao dịch
+google:eng:vi:Price:==:Giá
+google:eng:vi:Cost:==:Chi phí
+google:eng:vi:Currency:==:Tiền tệ
+google:eng:vi:Gold:==:Vàng
+google:eng:vi:Silver:==:Bạc
+google:eng:vi:Copper:==:Đồng
+google:eng:vi:Gem:==:Đá quý
+google:eng:vi:Diamond:==:Kim cương
+google:eng:vi:Coin:==:Xu
+google:eng:vi:Cash:==:Tiền mặt
+google:eng:vi:Discount:==:Giảm giá
+google:eng:vi:Sale:==:Khuyến mãi
+google:eng:vi:Purchase:==:Thanh toán
+google:eng:vi:Checkout:==:Thanh toán
+google:eng:vi:Cart:==:Giỏ hàng
+google:eng:vi:Sold Out:==:Hết hàng
+google:eng:vi:Available:==:Có sẵn
+google:eng:vi:Unlock:==:Mở khóa
+google:eng:vi:Upgrade:==:Nâng cấp
+google:eng:vi:Refine:==:Tinh luyện
+google:eng:vi:Craft:==:Chế tạo
+google:eng:vi:Multiplayer:==:Chơi nhiều người
+google:eng:vi:Singleplayer:==:Chơi đơn
+google:eng:vi:Online:==:Trực tuyến
+google:eng:vi:Offline:==:Ngoại tuyến
+google:eng:vi:Server:==:Máy chủ
+google:eng:vi:Connect:==:Kết nối
+google:eng:vi:Disconnect:==:Ngắt kết nối
+google:eng:vi:Login:==:Đăng nhập
+google:eng:vi:Logout:==:Đăng xuất
+google:eng:vi:Register:==:Đăng ký
+google:eng:vi:Account:==:Tài khoản
+google:eng:vi:Password:==:Mật khẩu
+google:eng:vi:Friend:==:Bạn bè
+google:eng:vi:Add Friend:==:Thêm bạn
+google:eng:vi:Invite:==:Mời
+google:eng:vi:Party:==:Tổ đội
+google:eng:vi:Group:==:Nhóm
+google:eng:vi:Team:==:Đội
+google:eng:vi:Guild:==:Bang hội
+google:eng:vi:Clan:==:Gia tộc
+google:eng:vi:Join:==:Tham gia
+google:eng:vi:Leave:==:Rời khỏi
+google:eng:vi:Kick:==:Đuổi
+google:eng:vi:Ban:==:Cấm
+google:eng:vi:Report:==:Báo cáo
+google:eng:vi:Block:==:Chặn
+google:eng:vi:Chat:==:Trò chuyện
+google:eng:vi:Message:==:Tin nhắn
+google:eng:vi:Mail:==:Thư
+google:eng:vi:Send:==:Gửi
+google:eng:vi:Receive:==:Nhận
+google:eng:vi:Rank:==:Hạng
+google:eng:vi:Leaderboard:==:Bảng xếp hạng
+google:eng:vi:Matchmaking:==:Tìm trận
+google:eng:vi:Lobby:==:Sảnh chờ
+google:eng:vi:Ping:==:Độ trễ
+google:eng:vi:Lag:==:Giật lag
+google:eng:vi:Quest:==:Nhiệm vụ
+google:eng:vi:Mission:==:Nhiệm vụ
+google:eng:vi:Objective:==:Mục tiêu
+google:eng:vi:Task:==:Công việc
+google:eng:vi:Accept Quest:==:Nhận nhiệm vụ
+google:eng:vi:Abandon Quest:==:Hủy nhiệm vụ
+google:eng:vi:Complete:==:Hoàn thành
+google:eng:vi:In Progress:==:Đang thực hiện
+google:eng:vi:Reward:==:Phần thưởng
+google:eng:vi:Main Quest:==:Nhiệm vụ chính
+google:eng:vi:Side Quest:==:Nhiệm vụ phụ
+google:eng:vi:Daily Quest:==:Nhiệm vụ hàng ngày
+google:eng:vi:Event:==:Sự kiện
+google:eng:vi:World:==:Thế giới
+google:eng:vi:Map:==:Bản đồ
+google:eng:vi:Area:==:Khu vực
+google:eng:vi:Zone:==:Vùng
+google:eng:vi:Location:==:Địa điểm
+google:eng:vi:Dungeon:==:Hầm ngục
+google:eng:vi:Town:==:Thị trấn
+google:eng:vi:City:==:Thành phố
+google:eng:vi:Village:==:Làng
+google:eng:vi:Waypoint:==:Điểm dịch chuyển
+google:eng:vi:Teleport:==:Dịch chuyển
+google:eng:vi:Explore:==:Khám phá
+google:eng:vi:Settings:==:Cài đặt
+google:eng:vi:Options:==:Tùy chọn
+google:eng:vi:Configuration:==:Cấu hình
+google:eng:vi:Video:==:Hình ảnh
+google:eng:vi:Graphics:==:Đồ họa
+google:eng:vi:Audio:==:Âm thanh
+google:eng:vi:Sound:==:Âm thanh
+google:eng:vi:Music:==:Nhạc nền
+google:eng:vi:Voice:==:Giọng nói
+google:eng:vi:Volume:==:Âm lượng
+google:eng:vi:Mute:==:Tắt tiếng
+google:eng:vi:Controls:==:Điều khiển
+google:eng:vi:Input:==:Đầu vào
+google:eng:vi:Keyboard:==:Bàn phím
+google:eng:vi:Mouse:==:Chuột
+google:eng:vi:Controller:==:Tay cầm
+google:eng:vi:Sensitivity:==:Độ nhạy
+google:eng:vi:Invert:==:Đảo ngược
+google:eng:vi:Resolution:==:Độ phân giải
+google:eng:vi:Fullscreen:==:Toàn màn hình
+google:eng:vi:Windowed:==:Cửa sổ
+google:eng:vi:Brightness:==:Độ sáng
+google:eng:vi:Contrast:==:Độ tương phản
+google:eng:vi:Quality:==:Chất lượng
+google:eng:vi:Low:==:Thấp
+google:eng:vi:Medium:==:Trung bình
+google:eng:vi:High:==:Cao
+google:eng:vi:Ultra:==:Cực cao
+google:eng:vi:Language:==:Ngôn ngữ
+google:eng:vi:Subtitles:==:Phụ đề
+google:eng:vi:Interface:==:Giao diện
+google:eng:vi:HUD:==:Hiển thị
+google:eng:vi:Ammo:==:Đạn
+google:eng:vi:Reload:==:Nạp đạn
+google:eng:vi:Shoot:==:Bắn
+google:eng:vi:Fire:==:Khai hỏa
+google:eng:vi:Aim:==:Ngắm
+google:eng:vi:Scope:==:Ống ngắm
+google:eng:vi:Recoil:==:Độ giật
+google:eng:vi:Headshot:==:Bắn vào đầu
+google:eng:vi:Sniper:==:Lính bắn tỉa
+google:eng:vi:Rifle:==:Súng trường
+google:eng:vi:Shotgun:==:Súng shotgun
+google:eng:vi:Pistol:==:Súng lục
+google:eng:vi:Grenade:==:Lựu đạn
+google:eng:vi:Flashbang:==:Bom choáng
+google:eng:vi:Smoke:==:Bom khói
+google:eng:vi:Cover:==:Che chắn
+google:eng:vi:Crouch:==:Ngồi
+google:eng:vi:Prone:==:Nằm
+google:eng:vi:Sprint:==:Chạy nhanh
+google:eng:vi:Killstreak:==:Chuỗi hạ gục
+google:eng:vi:Bomb:==:Bom
+google:eng:vi:Defuse:==:Gỡ bom
+google:eng:vi:Plant:==:Đặt bom
+google:eng:vi:Build:==:Xây dựng
+google:eng:vi:Construct:==:Xây dựng
+google:eng:vi:Upgrade:==:Nâng cấp
+google:eng:vi:Research:==:Nghiên cứu
+google:eng:vi:Recruit:==:Tuyển mộ
+google:eng:vi:Train:==:Huấn luyện
+google:eng:vi:Resources:==:Tài nguyên
+google:eng:vi:Wood:==:Gỗ
+google:eng:vi:Stone:==:Đá
+google:eng:vi:Food:==:Thực phẩm
+google:eng:vi:Iron:==:Sắt
+google:eng:vi:Gather:==:Thu thập
+google:eng:vi:Harvest:==:Thu hoạch
+google:eng:vi:Deck:==:Bộ bài
+google:eng:vi:Card:==:Lá bài
+google:eng:vi:Draw:==:Rút bài
+google:eng:vi:Shuffle:==:Xào bài
+google:eng:vi:Hand:==:Trên tay
+google:eng:vi:Graveyard:==:Nghĩa địa
+google:eng:vi:Turn End:==:Kết thúc lượt
+google:eng:vi:Phase:==:Giai đoạn
+google:eng:vi:Deploy:==:Triển khai
+google:eng:vi:Race:==:Cuộc đua
+google:eng:vi:Lap:==:Vòng
+google:eng:vi:Circuit:==:Đường đua
+google:eng:vi:Track:==:Đường đua
+google:eng:vi:Start Line:==:Vạch xuất phát
+google:eng:vi:Finish Line:==:Vạch đích
+google:eng:vi:Checkpoint:==:Điểm kiểm tra
+google:eng:vi:Speed:==:Tốc độ
+google:eng:vi:Accelerate:==:Tăng tốc
+google:eng:vi:Brake:==:Phanh
+google:eng:vi:Drift:==:Drift
+google:eng:vi:Nitro:==:Nitro
+google:eng:vi:Boost:==:Tăng tốc
+google:eng:vi:Position:==:Vị trí
+google:eng:vi:Gear:==:Số
+google:eng:vi:Clutch:==:Côn
+google:eng:vi:Tire:==:Lốp xe
+google:eng:vi:Engine:==:Động cơ
+google:eng:vi:Garage:==:Gara
+google:eng:vi:Time:==:Thời gian
+google:eng:vi:Date:==:Ngày
+google:eng:vi:Day:==:Ngày
+google:eng:vi:Week:==:Tuần
+google:eng:vi:Month:==:Tháng
+google:eng:vi:Year:==:Năm
+google:eng:vi:Hour:==:Giờ
+google:eng:vi:Minute:==:Phút
+google:eng:vi:Second:==:Giây
+google:eng:vi:Today:==:Hôm nay
+google:eng:vi:Tomorrow:==:Ngày mai
+google:eng:vi:Yesterday:==:Hôm qua
+google:eng:vi:Now:==:Bây giờ
+google:eng:vi:Later:==:Sau
+google:eng:vi:Always:==:Luôn luôn
+google:eng:vi:Never:==:Không bao giờ
+google:eng:vi:Sometimes:==:Thỉnh thoảng
+google:eng:vi:Rarely:==:Hiếm khi
+google:eng:vi:Often:==:Thường xuyên
+google:eng:vi:Daily:==:Hàng ngày
+google:eng:vi:Weekly:==:Hàng tuần
+google:eng:vi:Monthly:==:Hàng tháng
+google:eng:vi:Permanent:==:Vĩnh viễn
+google:eng:vi:Temporary:==:Tạm thời
+google:eng:vi:Unknown:==:Không xác định
+google:eng:vi:Empty:==:Trống
+google:eng:vi:Full:==:Đầy
+google:eng:vi:Locked:==:Đã khóa
+google:eng:vi:Unlocked:==:Đã mở
+google:eng:vi:Hidden:==:Ẩn
+google:eng:vi:Visible:==:Hiện
+google:eng:vi:Public:==:Công khai
+google:eng:vi:Private:==:Riêng tư
+google:eng:vi:Copy:==:Sao chép
+google:eng:vi:Paste:==:Dán
+google:eng:vi:Cut:==:Cắt
+google:eng:vi:Search:==:Tìm kiếm
+google:eng:vi:Find:==:Tìm
+google:eng:vi:Filter:==:Lọc
+google:eng:vi:Sort:==:Sắp xếp
+google:eng:vi:List:==:Danh sách
+google:eng:vi:Grid:==:Lưới
+google:eng:vi:Download:==:Tải xuống
+google:eng:vi:Update:==:Cập nhật
+google:eng:vi:Install:==:Cài đặt
+google:eng:vi:Uninstall:==:Gỡ cài đặt
+google:eng:vi:Version:==:Phiên bản
+google:eng:vi:Patch:==:Bản vá
+google:eng:vi:Maintenance:==:Bảo trì
+google:eng:vi:Texture:==:Bề mặt
+google:eng:vi:Shadow:==:Bóng đổ
+google:eng:vi:Anti-Aliasing:==:Khử răng cưa
+google:eng:vi:Post-Processing:==:Hậu kỳ
+google:eng:vi:Motion Blur:==:Làm mờ chuyển động
+google:eng:vi:Depth of Field:==:Độ sâu trường ảnh
+google:eng:vi:V-Sync:==:Đồng bộ dọc
+google:eng:vi:Bloom:==:Hiệu ứng sáng
+google:eng:vi:Ambient Occlusion:==:Đổ bóng môi trường
+google:eng:vi:Ray Tracing:==:Dò tia
+google:eng:vi:Render Scale:==:Tỷ lệ dựng hình
+google:eng:vi:Field of View:==:Góc nhìn
+google:eng:vi:FOV:==:Góc nhìn
+google:eng:vi:Gamma:==:Độ sáng Gamma
+google:eng:vi:Borderless Window:==:Cửa sổ không viền
+google:eng:vi:Frame Rate:==:Tốc độ khung hình
+google:eng:vi:FPS:==:Khung hình trên giây
+google:eng:vi:Refresh Rate:==:Tần số quét
+google:eng:vi:Packet Loss:==:Mất gói tin
+google:eng:vi:Latency:==:Độ trễ
+google:eng:vi:High Ping:==:Ping cao
+google:eng:vi:Connection Lost:==:Mất kết nối
+google:eng:vi:Reconnecting:==:Đang kết nối lại
+google:eng:vi:Server Full:==:Máy chủ đầy
+google:eng:vi:Banned:==:Bị cấm
+google:eng:vi:Suspended:==:Bị đình chỉ
+google:eng:vi:AFK:==:Treo máy
+google:eng:vi:Away From Keyboard:==:Rời bàn phím
+google:eng:vi:Noob:==:Gà
+google:eng:vi:Pro:==:Vip
+google:eng:vi:GG:==:Game hay
+google:eng:vi:Good Game:==:Game hay
+google:eng:vi:WP:==:Chơi tốt
+google:eng:vi:Well Played:==:Chơi tốt
+google:eng:vi:GLHF:==:Chúc may mắn vui vẻ
+google:eng:vi:Good Luck Have Fun:==:Chúc may mắn vui vẻ
+google:eng:vi:BRB:==:Quay lại ngay
+google:eng:vi:Be Right Back:==:Quay lại ngay
+google:eng:vi:LFG:==:Tìm nhóm
+google:eng:vi:Looking For Group:==:Tìm nhóm
+google:eng:vi:Tank:==:Đỡ đòn
+google:eng:vi:Support:==:Hỗ trợ
+google:eng:vi:Healer:==:Hồi máu
+google:eng:vi:DPS:==:Sát thương chủ lực
+google:eng:vi:Carry:==:Gánh team
+google:eng:vi:Jungler:==:Người đi rừng
+google:eng:vi:Mid:==:Đường giữa
+google:eng:vi:Top:==:Đường trên
+google:eng:vi:Bot:==:Đường dưới
+google:eng:vi:Lane:==:Đường
+google:eng:vi:Farm:==:Cày tiền
+google:eng:vi:Gank:==:Đánh úp
+google:eng:vi:Push:==:Đẩy đường
+google:eng:vi:Defend:==:Thủ nhà
+google:eng:vi:Backdoor:==:Đẩy lẻ
+google:eng:vi:Crowd Control:==:Khống chế
+google:eng:vi:CC:==:Khống chế
+google:eng:vi:AoE:==:Diện rộng
+google:eng:vi:DoT:==:Sát thương theo thời gian
+google:eng:vi:Damage over Time:==:Sát thương theo thời gian
+google:eng:vi:Burst:==:Sốc sát thương
+google:eng:vi:Sustain:==:Hồi phục
+google:eng:vi:Initiate:==:Mở giao tranh
+google:eng:vi:Engage:==:Giao tranh
+google:eng:vi:Disengage:==:Rút lui
+google:eng:vi:Bait:==:Nhử mồi
+google:eng:vi:Juke:==:Lừa tình
+google:eng:vi:Kite:==:Thả diều
+google:eng:vi:Feed:==:Hiến mạng
+google:eng:vi:Nerf:==:Giảm sức mạnh
+google:eng:vi:Buff:==:Tăng sức mạnh
+google:eng:vi:Meta:==:Chiến thuật hiện hành
+google:eng:vi:Smurf:==:Cày thuê
+google:eng:vi:Microtransaction:==:Giao dịch vi mô
+google:eng:vi:Battle Pass:==:Vé chiến đấu
+google:eng:vi:Season Pass:==:Vé mùa giải
+google:eng:vi:Skin:==:Trang phục
+google:eng:vi:Cosmetic:==:Đồ trang trí
+google:eng:vi:Bundle:==:Gói
+google:eng:vi:Starter Pack:==:Gói khởi đầu
+google:eng:vi:Daily Login:==:Điểm danh
+google:eng:vi:Check-in:==:Điểm danh
+google:eng:vi:Claim:==:Nhận
+google:eng:vi:Redeem:==:Đổi mã
+google:eng:vi:Code:==:Mã
+google:eng:vi:Gift:==:Quà tặng
+google:eng:vi:Inventory Full:==:Túi đồ đầy
+google:eng:vi:Not Enough Gold:==:Không đủ vàng
+google:eng:vi:Not Enough Energy:==:Không đủ năng lượng
+google:eng:vi:Level Up:==:Lên cấp
+google:eng:vi:New High Score:==:Điểm cao mới
+google:eng:vi:Achievement Unlocked:==:Mở khóa thành tựu
+google:eng:vi:Save Successful:==:Lưu thành công
+google:eng:vi:Load Failed:==:Tải thất bại
+google:eng:vi:Are you sure?:==:Bạn có chắc không?
+google:eng:vi:Changes will be lost:==:Thay đổi sẽ bị mất
+google:eng:vi:Press Any Key:==:Nhấn phím bất kỳ
+google:eng:vi:Click to Start:==:Nhấp để bắt đầu
+google:eng:vi:Tap to Continue:==:Chạm để tiếp tục
+google:eng:vi:Tutorial:==:Hướng dẫn
+google:eng:vi:Prologue:==:Mở đầu
+google:eng:vi:Epilogue:==:Kết thúc
+google:eng:vi:Chapter:==:Chương
+google:eng:vi:Act:==:Hồi
+google:eng:vi:Scene:==:Cảnh
+google:eng:vi:Cutscene:==:Đoạn phim
+google:eng:vi:Dialogue:==:Hội thoại
+google:eng:vi:Subtitle:==:Phụ đề
+google:eng:vi:Voiceover:==:Lồng tiếng
+google:eng:vi:Volume Master:==:Âm lượng tổng
+google:eng:vi:SFX:==:Hiệu ứng âm thanh
+google:eng:vi:BGM:==:Nhạc nền
+google:eng:vi:Resolution Scale:==:Tỷ lệ phân giải
+google:eng:vi:Aspect Ratio:==:Tỷ lệ khung hình
+google:eng:vi:Preset:==:Cài đặt sẵn
+google:eng:vi:Custom:==:Tùy chỉnh
+google:eng:vi:Keybind:==:Phím tắt
+google:eng:vi:Mapping:==:Gán phím
+google:eng:vi:Calibration:==:Hiệu chỉnh
+google:eng:vi:Vibration:==:Rung
+google:eng:vi:Haptic Feedback:==:Phản hồi xúc giác
+google:eng:vi:Brightness:==:Độ sáng
+google:eng:vi:Contrast:==:Tương phản
+google:eng:vi:Saturation:==:Độ bão hòa
+google:eng:vi:Sharpness:==:Độ nét
+google:eng:vi:Colorblind Mode:==:Chế độ mù màu
+google:eng:vi:Text Size:==:Cỡ chữ
+google:eng:vi:Opacity:==:Độ mờ
+google:eng:vi:Transparent:==:Trong suốt
+google:eng:vi:Overlay:==:Lớp phủ
+google:eng:vi:Notification:==:Thông báo
+google:eng:vi:Alert:==:Cảnh báo
+google:eng:vi:Popup:==:Cửa sổ bật lên
+google:eng:vi:Tooltip:==:Chú thích
+google:eng:vi:Hints:==:Gợi ý
+google:eng:vi:Tips:==:Mẹo
+google:eng:vi:Guide:==:Hướng dẫn
+google:eng:vi:Manual:==:Cẩm nang
+google:eng:vi:Wiki:==:Bách khoa toàn thư
+google:eng:vi:Forum:==:Diễn đàn
+google:eng:vi:Community:==:Cộng đồng
+google:eng:vi:Support:==:Hỗ trợ
+google:eng:vi:Feedback:==:Phản hồi
+google:eng:vi:Report Bug:==:Báo lỗi
+google:eng:vi:Privacy Policy:==:Chính sách quyền riêng tư
+google:eng:vi:Terms of Service:==:Điều khoản dịch vụ
+google:eng:vi:EULA:==:Thỏa thuận người dùng
+google:eng:vi:Copyright:==:Bản quyền
+google:eng:vi:Version:==:Phiên bản
+google:eng:vi:Build:==:Bản dựng
+google:eng:vi:Patch:==:Bản vá
+google:eng:vi:Hotfix:==:Sửa lỗi nhanh
+google:eng:vi:Maintenance:==:Bảo trì
+google:eng:vi:Downtime:==:Thời gian ngừng hoạt động
+google:eng:vi:Uptime:==:Thời gian hoạt động
+google:eng:vi:Status:==:Trạng thái
+google:eng:vi:Stable:==:Ổn định
+google:eng:vi:Unstable:==:Không ổn định
+google:eng:vi:Critical:==:Nghiêm trọng
+google:eng:vi:Fatal Error:==:Lỗi nghiêm trọng
+google:eng:vi:Crash:==:Sập game
+google:eng:vi:Freeze:==:Đứng hình
+google:eng:vi:Glitch:==:Lỗi hình ảnh
+google:eng:vi:Bug:==:Lỗi game
+google:eng:vi:Exploit:==:Lợi dụng lỗi
+google:eng:vi:Cheat:==:Gian lận
+google:eng:vi:Hack:==:Hack
+google:eng:vi:Bot:==:Bot
+google:eng:vi:Script:==:Kịch bản
+google:eng:vi:Macro:==:Macro
+google:eng:vi:Mod:==:Bản mod
+google:eng:vi:Addon:==:Tiện ích mở rộng
+google:eng:vi:Plugin:==:Plugin
+google:eng:vi:Extension:==:Tiện ích
+google:eng:vi:DLC:==:Nội dung tải thêm
+google:eng:vi:Expansion:==:Bản mở rộng
+google:eng:vi:Update:==:Cập nhật
+google:eng:vi:Upgrade:==:Nâng cấp
+google:eng:vi:Downgrade:==:Hạ cấp
+google:eng:vi:Install:==:Cài đặt
+google:eng:vi:Uninstall:==:Gỡ cài đặt
+google:eng:vi:Verify:==:Xác minh
+google:eng:vi:Repair:==:Sửa chữa
+google:eng:vi:Valid:==:Hợp lệ
+google:eng:vi:Invalid:==:Không hợp lệ
+google:eng:vi:Expired:==:Hết hạn
+google:eng:vi:Permanent:==:Vĩnh viễn
+google:eng:vi:Temporary:==:Tạm thời
+google:eng:vi:Trial:==:Dùng thử
+google:eng:vi:Demo:==:Bản thử nghiệm
+google:eng:vi:Full Version:==:Bản đầy đủ
+google:eng:vi:Premium:==:Cao cấp
+google:eng:vi:Standard:==:Tiêu chuẩn
+google:eng:vi:Basic:==:Cơ bản
+google:eng:vi:Ultimate:==:Tối thượng
+google:eng:vi:Deluxe:==:Sang trọng
+google:eng:vi:Collector's Edition:==:Phiên bản sưu tập
+google:eng:vi:Limited Edition:==:Phiên bản giới hạn
+google:eng:vi:Pre-order:==:Đặt trước
+google:eng:vi:Release Date:==:Ngày phát hành
+google:eng:vi:Coming Soon:==:Sắp ra mắt
+google:eng:vi:TBA:==:Sẽ thông báo sau
+google:eng:vi:To Be Announced:==:Sẽ thông báo sau

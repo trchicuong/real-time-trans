@@ -6,7 +6,9 @@ a = Analysis(
     ['translator.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('preset_cache.txt', '.'),  # Bundle preset_cache.txt vào exe
+    ],
     hiddenimports=[
         'tkinter',
         'tkinter.ttk',
@@ -33,6 +35,16 @@ a = Analysis(
         'queue',
         'concurrent.futures',
         'warnings',
+        'ctypes',  # For DPI awareness on Windows
+        'collections',  # For OrderedDict in cache_manager
+        'io',  # For StringIO in handlers and translator
+        'sys',  # For sys.frozen check in handlers
+        'time',  # For time operations in handlers
+        # Handlers package
+        'handlers',
+        'handlers.tesseract_ocr_handler',
+        'handlers.easyocr_handler',
+        'handlers.cache_manager',
         # EasyOCR (optional - requires PyTorch)
         'easyocr',
         'torch',

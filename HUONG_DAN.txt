@@ -75,7 +75,7 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
 
 3. ENGINE OCR:
    - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
-   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ
+   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU hơn
    - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
 
 4. NGÔN NGỮ ĐÍCH:
@@ -104,12 +104,13 @@ BƯỚC 3: Tùy chỉnh giao diện dịch (Tab "Giao Diện Dịch")
    - Độ trong suốt
    - Kích thước màn hình dịch
    - Căn lề, khoảng cách dòng
-   - Viền, bóng chữ
+   - Viền, padding
    - Hiển thị văn bản gốc
+   - Lưu lịch sử dịch
 
-3. NÚT ĐIỀU KHIỂN:
+   3. NÚT ĐIỀU KHIỂN:
    - "Áp Dụng": Áp dụng tất cả cài đặt đã thay đổi
-   - "Đặt Lại Tất Cả": Reset về mặc định (bao gồm vị trí màn hình dịch)
+   - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp màn hình, engine OCR, dịch vụ dịch và DeepL key)
 
 BƯỚC 4: Bắt đầu dịch (Tab "Điều Khiển")
 ─────────────────────────────────────────
@@ -141,7 +142,7 @@ BƯỚC 5: Sử dụng màn hình dịch
 
 • CHỌN ENGINE OCR:
   - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
-  - EasyOCR thường chính xác hơn cho tiếng Nhật, Hàn, Trung
+  - EasyOCR thường chính xác hơn cho game và các văn bản tiếng Nhật, Hàn, Trung
 
 • CHỌN DỊCH VỤ DỊCH THUẬT:
   - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
@@ -218,6 +219,11 @@ BƯỚC 5: Sử dụng màn hình dịch
   - Độ chính xác của OCR
 • Tất cả cài đặt được tự động lưu lại
 • Công cụ sẽ tự động điều chỉnh tốc độ để hoạt động mượt mà
+• Nút "Đặt Lại Tất Cả" sẽ KHÔNG reset:
+  - Vùng chụp màn hình (giữ nguyên vùng đã chọn)
+  - Engine OCR (giữ nguyên Tesseract hoặc EasyOCR)
+  - Dịch vụ dịch thuật (giữ nguyên Google hoặc DeepL)
+  - DeepL API Key (giữ nguyên key đã nhập)
 
 ═══════════════════════════════════════════════════════════════════════════════
 7. NGÔN NGỮ ĐƯỢC HỖ TRỢ

@@ -70,6 +70,18 @@ def test_imports():
     except ImportError:
         print("⚠ deepl not installed (optional)")
     
+    # Test handlers package
+    print("\nTesting handlers package...")
+    try:
+        from handlers import TesseractOCRHandler, EasyOCRHandler, TranslationCacheManager
+        print("✓ handlers package")
+        print("  ✓ TesseractOCRHandler")
+        print("  ✓ EasyOCRHandler")
+        print("  ✓ TranslationCacheManager")
+    except ImportError as e:
+        print(f"⚠ handlers package not available: {e}")
+        print("  (This is OK if running from source, but needed for exe)")
+    
     if errors:
         print("\nErrors found:")
         for error in errors:
