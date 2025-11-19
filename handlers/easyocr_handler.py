@@ -102,15 +102,21 @@ class EasyOCRHandler:
                         os.environ['PYTHONWARNINGS'] = 'ignore'
                         
                         # Tối ưu cho long sessions: reuse reader, không reload model
+                        # Cho phép download model tự động nếu chưa có (lần đầu tiên)
                         self.reader = easyocr.Reader(
                             [easyocr_lang], 
                             gpu=False, 
                             verbose=False,
-                            download_enabled=False  # Không download lại nếu đã có
+                            download_enabled=True  # Cho phép download model tự động nếu chưa có
                         )
                 finally:
                     sys.stderr = old_stderr
                     
+            except FileNotFoundError as e:
+                # Model chưa được download hoặc bị mất
+                error_msg = f"EasyOCR model chưa được tải. Vui lòng đảm bảo có kết nối internet để tải model lần đầu tiên.\nChi tiết: {str(e)}"
+                log_error("Lỗi khởi tạo EasyOCR reader - Model chưa được tải", e)
+                return None
             except Exception as e:
                 log_error("Lỗi khởi tạo EasyOCR reader", e)
                 return None
