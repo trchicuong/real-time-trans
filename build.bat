@@ -34,4 +34,3 @@ echo Build complete! Check the 'dist' folder for the executable.
 echo.
 echo If the exe doesn't work, try the DEBUG version to see error messages.
 pause
-

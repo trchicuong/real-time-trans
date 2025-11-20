@@ -6,6 +6,7 @@ Tool Python mã nguồn mở giúp dịch văn bản thời gian thực trên m�
 
 - 🚀 **Đa luồng xử lý**: Chụp màn hình, OCR và dịch thuật song song để tối ưu tốc độ
 - 🔄 **Hỗ trợ 2 Engine OCR**: Tesseract (mặc định) và EasyOCR (tùy chọn, chính xác hơn)
+- 🎮 **GPU Acceleration**: Tự động phát hiện và sử dụng NVIDIA GPU cho EasyOCR để giảm tải CPU
 - 🌐 **Hỗ trợ 2 Dịch vụ**: Google Translate (miễn phí) và DeepL (chất lượng cao)
 - 🎨 **Tùy chỉnh giao diện**: Preset nhanh hoặc tùy chỉnh chi tiết
 - 📍 **Tự động lưu cài đặt**: Vị trí, kích thước, và tất cả cài đặt
@@ -13,6 +14,7 @@ Tool Python mã nguồn mở giúp dịch văn bản thời gian thực trên m�
 - 🌍 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ nguồn và đích
 - 💾 **Cache thông minh**: LRU cache và preset cache để giảm API calls và tăng tốc độ
 - 📜 **Lưu lịch sử dịch**: Tùy chọn lưu và xem lại các bản dịch trước đó
+- ⚡ **Tối ưu hiệu suất**: Adaptive scan intervals, image preprocessing nâng cao, multi-scale processing
 
 ## Yêu Cầu
 
@@ -79,6 +81,22 @@ pip install -r requirements.txt
 pip install easyocr
 ```
 
+**Lưu ý về GPU cho EasyOCR:**
+
+- EasyOCR mặc định cài PyTorch CPU-only, sẽ sử dụng CPU (70-90% CPU usage)
+- Để sử dụng GPU và giảm tải CPU, cần cài PyTorch với CUDA:
+
+  ```bash
+  # Windows - Chạy script tự động:
+  install_pytorch_cuda.bat
+
+  # Hoặc cài thủ công:
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+  ```
+
+- Tool sẽ tự động phát hiện GPU và sử dụng nếu có
+- Kiểm tra GPU: `python test_gpu.py`
+
 4. (Tùy chọn) Cài đặt DeepL API để sử dụng dịch vụ dịch thuật chất lượng cao:
 
 ```bash
@@ -115,8 +133,14 @@ python translator.py
      - Giá trị nhỏ hơn = cập nhật nhanh hơn nhưng tốn CPU hơn
      - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
    - **Engine OCR**: Chọn Tesseract hoặc EasyOCR
-     - Tesseract: Mặc định, cần cài đặt Tesseract OCR
+     - Tesseract: Mặc định, cần cài đặt Tesseract OCR, CPU usage thấp
      - EasyOCR: Chính xác hơn cho một số ngôn ngữ, cần cài: `pip install easyocr`
+       - **EasyOCR Mode**: Chọn chế độ xử lý (chỉ hiện khi chọn EasyOCR)
+         - **Tự động**: Tự động phát hiện và sử dụng GPU nếu có (mặc định)
+         - **CPU**: Bắt buộc sử dụng CPU (khi muốn tiết kiệm GPU cho ứng dụng khác)
+         - **GPU**: Bắt buộc sử dụng GPU (nếu có GPU và muốn tối ưu hiệu suất)
+       - GPU mode giảm CPU usage từ 70-90% xuống <10%
+       - CPU mode có throttling để giảm tải (1.5s interval)
    - **Ngôn ngữ đích**: Chọn ngôn ngữ muốn dịch sang
    - **Dịch vụ dịch thuật**: Chọn Google Translate hoặc DeepL
      - Google Translate: Miễn phí, không cần API key
@@ -154,6 +178,7 @@ Công cụ tự động lưu cài đặt của bạn vào `config.json`:
 - Tọa độ vùng chụp màn hình
 - Ngôn ngữ nguồn và đích
 - Engine OCR (Tesseract hoặc EasyOCR)
+- EasyOCR Mode (Tự động/CPU/GPU) - nếu sử dụng EasyOCR
 - Dịch vụ dịch thuật (Google hoặc DeepL)
 - DeepL API Key (nếu sử dụng)
 - Khoảng thời gian cập nhật
@@ -239,9 +264,14 @@ Script này sẽ:
 
 ### Vấn Đề Hiệu Suất
 
+- **EasyOCR CPU usage cao (70-90%)**:
+  - Cài PyTorch với CUDA để sử dụng GPU: `install_pytorch_cuda.bat` hoặc xem hướng dẫn trong phần Cài Đặt
+  - Tool sẽ tự động phát hiện và sử dụng GPU nếu có
+  - Kiểm tra GPU: `python test_gpu.py`
 - Tăng khoảng thời gian cập nhật để giảm sử dụng CPU
 - Đảm bảo vùng chụp không quá lớn
 - Đóng các ứng dụng tiêu tốn tài nguyên khác
+- Sử dụng Tesseract nếu không cần độ chính xác cao (CPU usage thấp hơn nhiều)
 
 ### Cửa Sổ Overlay Không Hiển Thị
 
@@ -332,16 +362,29 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
   - Thread xử lý OCR
   - Thread xử lý dịch thuật
 - **Handlers Package**:
-  - `TesseractOCRHandler`: Quản lý Tesseract OCR với các kỹ thuật tối ưu (preprocessing, scaling, confidence filtering)
-  - `EasyOCRHandler`: Quản lý EasyOCR với tối ưu CPU (throttling, image resizing, lazy initialization)
+  - `TesseractOCRHandler`: Quản lý Tesseract OCR với các kỹ thuật tối ưu
+    - Preprocessing: CLAHE (Contrast Limited Adaptive Histogram Equalization), morphological operations
+    - Scaling: Tự động scale ảnh nhỏ lên để tăng độ chính xác
+    - Confidence filtering: Lọc kết quả OCR dựa trên confidence score
+    - Multi-scale processing: Thử nhiều tỷ lệ scale để chọn kết quả tốt nhất (tùy chọn)
+  - `EasyOCRHandler`: Quản lý EasyOCR với tối ưu hiệu suất
+    - GPU acceleration: Tự động phát hiện và sử dụng NVIDIA GPU (có thể chọn Tự động/CPU/GPU)
+    - User control: Người dùng có thể chọn chế độ xử lý (auto-detect, force CPU, force GPU)
+    - Throttling: Giới hạn tần suất gọi EasyOCR (1.5s CPU, 0.5s GPU)
+    - Image resizing: Resize ảnh để giảm tải xử lý (600px CPU, 800px GPU)
+    - Lazy initialization: Chỉ khởi tạo reader khi cần
+    - Multi-scale processing: Thử nhiều tỷ lệ scale cho CPU mode (tùy chọn)
   - `TranslationCacheManager`: Quản lý translation cache với LRU cache và file persistence
+    - Encoding detection: Tự động phát hiện encoding với `chardet` (fallback nếu không có)
+    - Robust file handling: Xử lý file cache bị corrupt, tự động backup và recreate
 - **Tối Ưu Hiệu Suất**:
   - Xử lý song song với ThreadPoolExecutor
-  - Tự động điều chỉnh tốc độ dựa trên tải
+  - Adaptive scan intervals: Tự động điều chỉnh tốc độ capture dựa trên số lượng OCR calls đang xử lý
   - LRU cache và file cache để giảm API calls
   - Preset cache để load các bản dịch phổ biến khi khởi động
   - Image hashing để bỏ qua frame trùng lặp
   - Throttling và deduplication để tránh rate limits
+  - GPU acceleration cho EasyOCR (tự động phát hiện)
 
 ## 📁 Cấu Trúc Dự Án
 
@@ -357,6 +400,8 @@ real-time-trans/
 ├── build.bat                 # Script build cho Windows
 ├── build.spec                # File cấu hình PyInstaller
 ├── test_exe.py              # Script kiểm tra dependencies
+├── test_gpu.py              # Script kiểm tra GPU và PyTorch CUDA
+├── install_pytorch_cuda.bat  # Script tự động cài PyTorch với CUDA
 ├── requirements.txt          # Danh sách thư viện Python cần thiết
 ├── preset_cache.txt          # File preset cache (bundle vào exe)
 ├── LICENSE
@@ -407,7 +452,11 @@ real-time-trans/
 
 - **`build.spec`**: File cấu hình PyInstaller với đầy đủ hidden imports và bundle `preset_cache.txt`
 
-- **`test_exe.py`**: Script kiểm tra dependencies trước khi build exe
+- **`test_exe.py`**: Script kiểm tra dependencies trước khi build exe (bao gồm chardet, torch)
+
+- **`test_gpu.py`**: Script kiểm tra GPU availability, PyTorch CUDA, và EasyOCR GPU mode
+
+- **`install_pytorch_cuda.bat`**: Script tự động uninstall CPU-only PyTorch và cài PyTorch với CUDA support
 
 - **`preset_cache.txt`**: File preset cache chứa các bản dịch phổ biến, được bundle vào exe và load khi khởi động
 
@@ -444,13 +493,19 @@ Nếu bạn muốn phát triển hoặc đóng góp cho dự án:
    python test_exe.py
    ```
 
-5. **Chạy công cụ:**
+5. **Kiểm tra GPU (nếu dùng EasyOCR):**
+
+   ```bash
+   python test_gpu.py
+   ```
+
+6. **Chạy công cụ:**
 
    ```bash
    python translator.py
    ```
 
-6. **Build executable (tùy chọn):**
+7. **Build executable (tùy chọn):**
    ```bash
    # Windows
    build.bat
@@ -481,6 +536,8 @@ Dự án này sử dụng các thư viện mã nguồn mở:
 - [Pillow](https://python-pillow.org/) - PIL License
 - [mss](https://github.com/BoboTiG/python-mss) - MIT License
 - [EasyOCR](https://github.com/JaidedAI/EasyOCR) - Apache License 2.0 (tùy chọn)
+- [PyTorch](https://pytorch.org/) - BSD License (tùy chọn, cho EasyOCR GPU support)
+- [chardet](https://github.com/chardet/chardet) - LGPL License (tùy chọn, cho encoding detection)
 - [DeepL API](https://www.deepl.com/docs-api) - Proprietary (tùy chọn, có phí)
 
 ### Kiến Trúc Code
@@ -489,9 +546,11 @@ Dự án được tổ chức theo mô hình modular với handlers package:
 
 - **Separation of Concerns**: OCR logic được tách riêng vào handlers
 - **Easy Extension**: Dễ dàng thêm engine OCR mới bằng cách tạo handler mới
-- **Error Handling**: Tất cả lỗi được log vào `error_log.txt` để debug
-- **Path Handling**: Tự động detect và xử lý đúng đường dẫn cho cả script và exe
-- **Cache Strategy**: LRU cache + file cache + preset cache để tối ưu hiệu suất
+- **Error Handling**: Tất cả lỗi được log vào `error_log.txt` với robust error handling và multiple fallbacks
+- **Path Handling**: Tự động detect và xử lý đúng đường dẫn cho cả script và exe, hỗ trợ cross-platform
+- **Cache Strategy**: LRU cache + file cache + preset cache với encoding detection và corruption handling
+- **GPU Support**: Tự động phát hiện và sử dụng GPU cho EasyOCR, graceful fallback về CPU
+- **Performance Optimization**: Adaptive scan intervals, multi-scale processing, intelligent throttling
 
 ## 🙏 Lời Cảm Ơn
 

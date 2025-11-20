@@ -40,6 +40,7 @@ a = Analysis(
         'io',  # For StringIO in handlers and translator
         'sys',  # For sys.frozen check in handlers
         'time',  # For time operations in handlers
+        'tempfile',  # For temporary directory operations in handlers and translator
         # Handlers package
         'handlers',
         'handlers.tesseract_ocr_handler',
@@ -47,10 +48,16 @@ a = Analysis(
         'handlers.cache_manager',
         # EasyOCR (optional - requires PyTorch)
         'easyocr',
+        # PyTorch for EasyOCR GPU support
         'torch',
-        'torchvision',
+        'torch.cuda',
         'torch.nn',
         'torch.backends',
+        'torch.backends.cudnn',
+        'torchvision',
+        'torchaudio',  # Part of PyTorch CUDA installation
+        # Encoding detection (optional)
+        'chardet',
         # DeepL (optional)
         'deepl',
     ],
@@ -88,4 +95,3 @@ exe = EXE(
     entitlements_file=None,
     icon=None,
 )
-

@@ -7,6 +7,13 @@ import shutil
 import time
 from collections import OrderedDict
 
+# Optional: chardet for encoding detection
+try:
+    import chardet
+    CHARDET_AVAILABLE = True
+except ImportError:
+    CHARDET_AVAILABLE = False
+
 def get_base_dir():
     """Lấy thư mục gốc để lưu cache file
     Hỗ trợ cả chạy từ Python script và frozen executable (PyInstaller)
@@ -42,6 +49,86 @@ def log_error(msg, exception=None):
                 f.write(f"Traceback:\n{traceback.format_exc()}\n")
     except Exception:
         pass
+
+def detect_file_encoding(file_path):
+    """
+    Detect encoding của file, fallback về UTF-8 nếu không detect được
+    """
+    # Thử dùng chardet nếu có
+    if CHARDET_AVAILABLE:
+        try:
+            with open(file_path, 'rb') as f:
+                raw_data = f.read(10000)  # Đọc 10KB đầu để detect
+                if raw_data:
+                    result = chardet.detect(raw_data)
+                    detected_encoding = result.get('encoding', 'utf-8')
+                    confidence = result.get('confidence', 0)
+                    
+                    # Chỉ trust nếu confidence > 0.7
+                    if confidence > 0.7 and detected_encoding:
+                        return detected_encoding
+        except Exception:
+            pass
+    
+    # Fallback encodings (test từng encoding)
+    encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+    for encoding in encodings_to_try:
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                f.read(1000)  # Test đọc
+            return encoding
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # Last resort: UTF-8 với error handling
+    return 'utf-8'
+
+def safe_read_file_lines(file_path, encodings=None):
+    """
+    Đọc file an toàn với nhiều encoding fallback
+    Returns: (lines, encoding_used) hoặc (None, None) nếu fail
+    """
+    if encodings is None:
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+    
+    # Thử detect encoding trước
+    try:
+        detected = detect_file_encoding(file_path)
+        if detected and detected not in encodings:
+            encodings.insert(0, detected)
+    except Exception:
+        pass
+    
+    for encoding in encodings:
+        try:
+            lines = []
+            with open(file_path, 'r', encoding=encoding, errors='replace') as f:
+                for line_num, line in enumerate(f, 1):
+                    try:
+                        # Validate line có thể decode được
+                        line.encode('utf-8')
+                        lines.append(line)
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        # Skip dòng lỗi
+                        log_error(f"Skipping invalid line {line_num} in {file_path}")
+                        continue
+            return lines, encoding
+        except (UnicodeDecodeError, UnicodeError) as e:
+            log_error(f"Failed to read {file_path} with encoding {encoding}: {e}")
+            continue
+        except Exception as e:
+            log_error(f"Error reading {file_path} with encoding {encoding}: {e}")
+            continue
+    
+    # Nếu tất cả đều fail, thử UTF-8 với errors='replace'
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+        log_error(f"Read {file_path} with UTF-8 (errors replaced) - file may be corrupted")
+        return lines, 'utf-8'
+    except Exception as e:
+        log_error(f"Completely failed to read {file_path}: {e}")
+        return None, None
 
 
 class TranslationCacheManager:
@@ -92,8 +179,13 @@ class TranslationCacheManager:
         # Check file cache
         if self.cache_file and os.path.exists(self.cache_file):
             try:
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    for line in f:
+                lines, encoding_used = safe_read_file_lines(self.cache_file)
+                if lines is None:
+                    log_error("Failed to read cache file, skipping file cache lookup")
+                    return None
+                
+                for line in lines:
+                    try:
                         line = line.strip()
                         if not line or line.startswith('#') or ':==:' not in line:
                             continue
@@ -107,6 +199,9 @@ class TranslationCacheManager:
                                 # Found in file cache, add to LRU
                                 self._add_to_cache(cache_key, value_from_file)
                                 return value_from_file
+                    except Exception as line_error:
+                        # Skip dòng lỗi, tiếp tục với dòng tiếp theo
+                        continue
             except Exception as e:
                 log_error("Error reading file cache", e)
         
@@ -147,19 +242,74 @@ class TranslationCacheManager:
         try:
             # Check if entry already exists
             if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if line.startswith(cache_key + ':==:'):
-                            return  # Already exists, skip
+                lines, encoding_used = safe_read_file_lines(self.cache_file)
+                if lines is not None:
+                    for line in lines:
+                        try:
+                            if line.startswith(cache_key + ':==:'):
+                                return  # Already exists, skip
+                        except Exception:
+                            # Skip dòng lỗi
+                            continue
+                else:
+                    # File bị corrupt, tạo lại file mới
+                    log_error(f"Cache file {self.cache_file} is corrupted, will recreate it")
+                    try:
+                        # Backup file cũ
+                        backup_file = self.cache_file + '.backup'
+                        if os.path.exists(self.cache_file):
+                            shutil.copy2(self.cache_file, backup_file)
+                        # Tạo file mới
+                        try:
+                            # Đảm bảo thư mục tồn tại
+                            cache_dir = os.path.dirname(self.cache_file)
+                            if cache_dir and not os.path.exists(cache_dir):
+                                os.makedirs(cache_dir, exist_ok=True)
+                        except (OSError, PermissionError):
+                            pass  # Continue anyway
+                        
+                        with open(self.cache_file, 'w', encoding='utf-8', errors='replace') as f:
+                            f.write("# Translation Cache File\n")
+                            f.write("# Format: translator:source:target:text:==:translation\n\n")
+                            f.flush()
+                    except Exception as backup_error:
+                        log_error(f"Error backing up corrupted cache file: {backup_error}")
             else:
                 # Create file with header
-                with open(self.cache_file, 'w', encoding='utf-8') as f:
+                try:
+                    # Đảm bảo thư mục tồn tại
+                    cache_dir = os.path.dirname(self.cache_file)
+                    if cache_dir and not os.path.exists(cache_dir):
+                        os.makedirs(cache_dir, exist_ok=True)
+                except (OSError, PermissionError):
+                    pass  # Continue anyway
+                
+                with open(self.cache_file, 'w', encoding='utf-8', errors='replace') as f:
                     f.write("# Translation Cache File\n")
                     f.write("# Format: translator:source:target:text:==:translation\n\n")
+                    f.flush()
             
-            # Append new entry
-            with open(self.cache_file, 'a', encoding='utf-8') as f:
-                f.write(f"{cache_key}:==:{translated_text}\n")
+            # Append new entry (luôn dùng UTF-8 khi ghi)
+            try:
+                with open(self.cache_file, 'a', encoding='utf-8', errors='replace') as f:
+                    # Đảm bảo cache_key và translated_text là UTF-8 valid
+                    try:
+                        safe_key = cache_key.encode('utf-8', errors='replace').decode('utf-8')
+                        safe_value = translated_text.encode('utf-8', errors='replace').decode('utf-8')
+                        f.write(f"{safe_key}:==:{safe_value}\n")
+                        f.flush()  # Force write to disk
+                    except Exception as encode_error:
+                        log_error(f"Error encoding cache entry: {encode_error}")
+                        # Thử ghi với ASCII fallback
+                        try:
+                            safe_key = cache_key.encode('ascii', errors='replace').decode('ascii')
+                            safe_value = translated_text.encode('ascii', errors='replace').decode('ascii')
+                            f.write(f"{safe_key}:==:{safe_value}\n")
+                            f.flush()
+                        except Exception:
+                            log_error("Completely failed to save cache entry")
+            except (IOError, PermissionError, OSError) as file_err:
+                log_error(f"Error writing to cache file: {file_err}")
                 
         except Exception as e:
             log_error("Error saving to file cache", e)
@@ -169,10 +319,11 @@ class TranslationCacheManager:
         self.cache.clear()
         if self.cache_file and os.path.exists(self.cache_file):
             try:
-                with open(self.cache_file, 'w', encoding='utf-8') as f:
+                with open(self.cache_file, 'w', encoding='utf-8', errors='replace') as f:
                     f.write("# Translation Cache File\n")
                     f.write("# Format: translator:source:target:text:==:translation\n\n")
-            except Exception as e:
+                    f.flush()
+            except (IOError, PermissionError, OSError) as e:
                 log_error("Error clearing file cache", e)
     
     def get_size(self):
@@ -207,8 +358,13 @@ class TranslationCacheManager:
                 return
             
             loaded_count = 0
-            with open(preset_cache_file, 'r', encoding='utf-8') as f:
-                for line in f:
+            lines, encoding_used = safe_read_file_lines(preset_cache_file)
+            if lines is None:
+                log_error("Failed to read preset cache file, skipping preset cache loading")
+                return
+            
+            for line in lines:
+                try:
                     line = line.strip()
                     # Bỏ qua comment và dòng trống
                     if not line or line.startswith('#'):
@@ -247,6 +403,9 @@ class TranslationCacheManager:
                     if cache_key not in self.cache:
                         self._add_to_cache(cache_key, translation)
                         loaded_count += 1
+                except Exception as line_error:
+                    # Skip dòng lỗi, tiếp tục với dòng tiếp theo
+                    continue
             
             # Log thông tin load preset cache (chỉ khi có entries)
             if loaded_count > 0:

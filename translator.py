@@ -17,8 +17,20 @@ if os.name == 'nt':  # Windows only
         try:
             # Fallback for Windows 8 and older
             ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass  # If all fails, continue without DPI awareness
+        except Exception as e:
+            # log_error chưa được định nghĩa ở đây, sẽ log sau khi import
+            try:
+                import traceback
+                from datetime import datetime
+                error_log_file = os.path.join(os.getcwd(), "error_log.txt")
+                with open(error_log_file, 'a', encoding='utf-8', errors='replace') as f:
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    f.write(f"\n[{timestamp}] Failed to set DPI awareness (fallback also failed)\n")
+                    f.write(f"Exception: {str(e)}\n")
+                    f.write(f"Traceback:\n{traceback.format_exc()}\n")
+                    f.write("-" * 80 + "\n")
+            except Exception:
+                pass  # If all fails, continue without DPI awareness
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -92,19 +104,59 @@ def get_base_dir():
         return os.path.normpath(os.getcwd())
 
 def log_error(error_msg, exception=None):
-    """Ghi lỗi ra file error_log.txt để debug"""
+    """Ghi lỗi ra file error_log.txt để debug - robust error handling cho EXE"""
     try:
         base_dir = get_base_dir()
         error_log_file = os.path.join(base_dir, "error_log.txt")
-        with open(error_log_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"\n[{timestamp}] {error_msg}\n")
-            if exception:
-                f.write(f"Exception: {str(exception)}\n")
-                f.write(f"Traceback:\n{traceback.format_exc()}\n")
-            f.write("-" * 80 + "\n")
-    except Exception:
-        pass
+        
+        # Đảm bảo thư mục tồn tại
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+        except (OSError, PermissionError) as dir_err:
+            # Nếu không tạo được thư mục, fallback về thư mục hiện tại
+            try:
+                base_dir = os.getcwd()
+                error_log_file = os.path.join(base_dir, "error_log.txt")
+            except Exception:
+                # Ultimate fallback: thư mục temp
+                try:
+                    import tempfile
+                    base_dir = tempfile.gettempdir()
+                    error_log_file = os.path.join(base_dir, "real-time-trans_error_log.txt")
+                except Exception:
+                    pass  # Complete failure
+        
+        # Ghi log với error handling
+        try:
+            with open(error_log_file, 'a', encoding='utf-8', errors='replace') as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"\n[{timestamp}] {error_msg}\n")
+                if exception:
+                    f.write(f"Exception: {str(exception)}\n")
+                    try:
+                        f.write(f"Traceback:\n{traceback.format_exc()}\n")
+                    except Exception:
+                        f.write("Traceback: (unable to format)\n")
+                f.write("-" * 80 + "\n")
+                f.flush()  # Force write to disk
+        except (IOError, PermissionError, OSError) as file_err:
+            # Nếu không ghi được file, thử ghi vào stderr (nếu có console)
+            try:
+                import sys
+                sys.stderr.write(f"[ERROR LOG FAILED] {error_msg}\n")
+                if exception:
+                    sys.stderr.write(f"Exception: {str(exception)}\n")
+                sys.stderr.write(f"File write error: {file_err}\n")
+            except Exception:
+                pass  # Last resort: ignore
+    except Exception as critical_err:
+        # Ultimate fallback: try stderr
+        try:
+            import sys
+            sys.stderr.write(f"[CRITICAL] Error logging failed: {error_msg}\n")
+            sys.stderr.write(f"Critical error: {critical_err}\n")
+        except Exception:
+            pass  # Complete failure, ignore
 
 def get_actual_screen_size():
     """
@@ -122,16 +174,16 @@ def get_actual_screen_size():
             width = user32.GetSystemMetrics(0)
             height = user32.GetSystemMetrics(1)
             return (width, height)
-        except Exception:
-            pass
+        except Exception as e:
+            log_error("Error getting screen size from GetSystemMetrics", e)
     
     # Fallback: dùng mss (cross-platform và reliable)
     try:
         with mss.mss() as sct:
             monitor = sct.monitors[1]  # Primary monitor
             return (monitor['width'], monitor['height'])
-    except Exception:
-        pass
+    except Exception as e:
+        log_error("Error getting screen size from mss", e)
     
     # Last resort: tkinter (có thể không chính xác với DPI)
     try:
@@ -141,7 +193,8 @@ def get_actual_screen_size():
         height = root.winfo_screenheight()
         root.destroy()
         return (width, height)
-    except Exception:
+    except Exception as e:
+        log_error("Error getting screen size from tkinter", e)
         # Default fallback
         return (1920, 1080)
 
@@ -155,7 +208,8 @@ def get_all_monitors_bounds():
     try:
         with mss.mss() as sct:
             return sct.monitors
-    except Exception:
+    except Exception as e:
+        log_error("Error getting monitor bounds from mss", e)
         return None
 
 def find_tesseract(custom_path=None):
@@ -256,10 +310,14 @@ class ScreenTranslator:
         self.EASYOCR_AVAILABLE = EASYOCR_AVAILABLE
         self.HANDLERS_AVAILABLE = HANDLERS_AVAILABLE
         
+        # EasyOCR GPU option (None = auto-detect, True = force GPU, False = force CPU)
+        self.easyocr_use_gpu = None  # Default: auto-detect
+        
         # OCR Handlers (nếu có) - cần source_language đã được khởi tạo
+        # Note: easyocr_handler sẽ được khởi tạo lại khi cần với GPU option
         if HANDLERS_AVAILABLE:
             self.tesseract_handler = TesseractOCRHandler(source_language=self.source_language)
-            self.easyocr_handler = EasyOCRHandler(source_language=self.source_language) if EASYOCR_AVAILABLE else None
+            self.easyocr_handler = None  # Sẽ khởi tạo khi cần với GPU option
         else:
             self.tesseract_handler = None
             self.easyocr_handler = None
@@ -357,6 +415,7 @@ class ScreenTranslator:
         # Adaptive scan interval
         self.base_scan_interval = int(self.update_interval * 1000)  # ms
         self.current_scan_interval = self.base_scan_interval
+        self.overload_detected = False  # Track OCR overload state
         
         # Threads
         self.capture_thread = None
@@ -384,7 +443,22 @@ class ScreenTranslator:
         
         # Khởi tạo OCR engine nếu cần
         if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-            self.initialize_easyocr_reader()
+            # Khởi tạo handler với GPU option nếu dùng handlers
+            if HANDLERS_AVAILABLE and not self.easyocr_handler:
+                try:
+                    self.easyocr_handler = EasyOCRHandler(
+                        source_language=self.source_language,
+                        use_gpu=self.easyocr_use_gpu
+                    )
+                except Exception as e:
+                    log_error("Lỗi khởi tạo EasyOCR handler từ config", e)
+                    self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
+                    # Nếu handler khởi tạo thất bại, fallback về reader cũ
+                    self.easyocr_handler = None
+                    self.initialize_easyocr_reader()
+            # Hoặc khởi tạo reader trực tiếp nếu không dùng handlers
+            elif not HANDLERS_AVAILABLE:
+                self.initialize_easyocr_reader()
         
         # Khởi tạo DeepL client nếu đang dùng DeepL
         if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_key:
@@ -420,6 +494,46 @@ class ScreenTranslator:
                 )
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def update_adaptive_scan_interval(self):
+        """
+        Điều chỉnh scan interval dựa trên OCR load để tránh bottleneck
+        Tăng scan interval khi có quá nhiều active OCR calls
+        """
+        try:
+            # Count active OCR calls
+            active_ocr_count = len(self.active_ocr_calls)
+            
+            # Base interval từ user setting (ms)
+            base_interval = int(self.update_interval * 1000)
+            
+            # Update base_scan_interval nếu user thay đổi setting
+            if base_interval != self.base_scan_interval:
+                self.base_scan_interval = base_interval
+            
+            # Adaptive logic: nếu active OCR calls > 5, tăng scan interval lên 150%
+            if active_ocr_count > 5:
+                if not self.overload_detected:
+                    # First detection of overload
+                    self.current_scan_interval = int(base_interval * 1.5)  # 150%
+                    self.overload_detected = True
+                    log_error(f"ADAPTIVE: OCR overload detected ({active_ocr_count} active calls), increasing scan interval to {self.current_scan_interval}ms")
+                else:
+                    # Already in overload state, maintain increased interval
+                    pass  # Keep current_scan_interval unchanged
+            elif active_ocr_count < 5:
+                if self.overload_detected:
+                    # Load has decreased, return to normal
+                    self.current_scan_interval = base_interval
+                    self.overload_detected = False
+                    log_error(f"ADAPTIVE: OCR load normalized ({active_ocr_count} active calls), returning scan interval to {self.current_scan_interval}ms")
+                else:
+                    # Normal state, no change needed
+                    self.current_scan_interval = base_interval
+        except Exception as e:
+            # Fallback to base interval on error
+            self.current_scan_interval = self.base_scan_interval
+            log_error("Error in update_adaptive_scan_interval", e)
     
     def verify_tesseract(self, silent=False):
         """Kiểm tra Tesseract OCR đã được cài đặt và có thể truy cập
@@ -787,6 +901,76 @@ class ScreenTranslator:
             width=10
         )
         self.tesseract_browse_button.pack(side=tk.LEFT)
+        
+        # EasyOCR GPU Option (only show when EasyOCR is selected)
+        self.easyocr_gpu_row = 3
+        self.easyocr_gpu_frame = ttk.Frame(settings_frame)
+        self.easyocr_gpu_frame.grid(row=self.easyocr_gpu_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        
+        # Detect GPU availability for info display
+        gpu_available = False
+        gpu_name = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_available = True
+                gpu_name = torch.cuda.get_device_name(0)
+        except Exception as e:
+            log_error("Error checking GPU availability in UI", e)
+        
+        # GPU option: Auto/CPU/GPU
+        self.easyocr_gpu_var = tk.StringVar(value="auto")  # auto, cpu, gpu
+        if self.easyocr_use_gpu is True:
+            self.easyocr_gpu_var.set("gpu")
+        elif self.easyocr_use_gpu is False:
+            self.easyocr_gpu_var.set("cpu")
+        else:
+            self.easyocr_gpu_var.set("auto")
+        
+        ttk.Label(self.easyocr_gpu_frame, text="EasyOCR Mode:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        gpu_radio_frame = ttk.Frame(self.easyocr_gpu_frame)
+        gpu_radio_frame.pack(side=tk.LEFT)
+        
+        ttk.Radiobutton(
+            gpu_radio_frame,
+            text="Tự động",
+            variable=self.easyocr_gpu_var,
+            value="auto",
+            command=self.on_easyocr_gpu_change
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Radiobutton(
+            gpu_radio_frame,
+            text="CPU",
+            variable=self.easyocr_gpu_var,
+            value="cpu",
+            command=self.on_easyocr_gpu_change
+        ).pack(side=tk.LEFT, padx=5)
+        
+        gpu_radio = ttk.Radiobutton(
+            gpu_radio_frame,
+            text="GPU",
+            variable=self.easyocr_gpu_var,
+            value="gpu",
+            command=self.on_easyocr_gpu_change
+        )
+        gpu_radio.pack(side=tk.LEFT, padx=5)
+        
+        # Disable GPU option if GPU not available
+        if not gpu_available:
+            gpu_radio.config(state=tk.DISABLED)
+            gpu_info_text = " (GPU không khả dụng)"
+        else:
+            gpu_info_text = f" ({gpu_name})" if gpu_name else ""
+        
+        self.gpu_info_label = tk.Label(
+            self.easyocr_gpu_frame,
+            text=gpu_info_text,
+            font=("Arial", 8),
+            fg="gray" if not gpu_available else "green"
+        )
+        self.gpu_info_label.pack(side=tk.LEFT, padx=5)
         
         # Translation Service Selection
         translation_frame = ttk.LabelFrame(parent, text="Dịch Thuật", padding=10)
@@ -1196,7 +1380,7 @@ class ScreenTranslator:
         # Instructions content - Hướng dẫn cho người dùng phổ thông (EXE)
         # Lưu ý: Nội dung này dành cho người dùng cuối, không chứa thông tin kỹ thuật/dev
         instructions_text = """
-HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
+HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC (BẢN CUDA)
 
 1. CÀI ĐẶT
 
@@ -1258,14 +1442,20 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
    
    3. ENGINE OCR:
       - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
-      - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU hơn
+      - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU/GPU hơn
       - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
    
-   4. NGÔN NGỮ ĐÍCH:
+   4. EASYOCR MODE (chỉ hiện khi chọn EasyOCR):
+      - Tự động: Công cụ tự động chọn CPU hoặc GPU phù hợp (khuyến nghị)
+      - CPU: Sử dụng CPU để xử lý (tiết kiệm GPU cho ứng dụng khác)
+      - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
+      - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
+   
+   5. NGÔN NGỮ ĐÍCH:
       - Chọn ngôn ngữ muốn dịch sang
       - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
    
-   5. DỊCH VỤ DỊCH THUẬT:
+   6. DỊCH VỤ DỊCH THUẬT:
       - Google Translate: Miễn phí, không cần API key
       - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
         - Nếu chọn DeepL, nhập API Key vào ô tương ứng
@@ -1321,6 +1511,7 @@ BƯỚC 5: Sử dụng màn hình dịch
    • CHỌN ENGINE OCR:
      - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
      - EasyOCR thường chính xác hơn cho game hoặc các văn bản tiếng Nhật, Hàn, Trung
+     - Nếu chọn EasyOCR và máy có card đồ họa NVIDIA, chọn "GPU" trong "EasyOCR Mode" để chạy mượt hơn
    
    • CHỌN DỊCH VỤ DỊCH THUẬT:
      - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
@@ -1355,11 +1546,13 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
    
    • CHẬM HOẶC LAG:
+     - Nếu dùng EasyOCR: Chọn "GPU" trong "EasyOCR Mode" nếu máy có card đồ họa NVIDIA
      - Tăng khoảng thời gian cập nhật (200-300ms)
      - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
      - Chọn vùng chụp nhỏ hơn
      - Tắt hiển thị văn bản gốc
      - Đóng các ứng dụng khác đang chạy
+     - Thử chuyển sang Tesseract nếu EasyOCR quá chậm
    
    • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
      - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
@@ -1402,6 +1595,7 @@ BƯỚC 5: Sử dụng màn hình dịch
    • Ngôn ngữ nguồn (OCR)
    • Khoảng thời gian cập nhật
    • Engine OCR (Tesseract/EasyOCR)
+   • EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
    • Đường dẫn Tesseract (khi chọn Tesseract)
    • Ngôn ngữ đích
    • Dịch vụ dịch thuật (Google/DeepL)
@@ -1459,13 +1653,25 @@ Chúc bạn sử dụng công cụ hiệu quả!
             return
         
         try:
-            with open(self.config_file, 'r', encoding='utf-8') as f:
+            with open(self.config_file, 'r', encoding='utf-8', errors='replace') as f:
                 config = json.load(f)
             
             self.capture_region = config.get('capture_region')
             self.source_language = config.get('source_language', 'eng')
             self.ocr_engine = config.get('ocr_engine', 'tesseract')
             self.update_interval = config.get('update_interval', 0.5)
+            
+            # Load EasyOCR GPU option
+            easyocr_gpu_config = config.get('easyocr_use_gpu', None)
+            if easyocr_gpu_config is None:
+                self.easyocr_use_gpu = None  # Auto-detect
+            elif easyocr_gpu_config is True:
+                self.easyocr_use_gpu = True  # Force GPU
+            else:
+                self.easyocr_use_gpu = False  # Force CPU
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             self.custom_tesseract_path = config.get('custom_tesseract_path')
             
             # Load overlay customization settings (with optimized defaults)
@@ -1537,6 +1743,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'target_language': self.target_language,
                 'update_interval': self.update_interval,
                 'ocr_engine': self.ocr_engine,
+                'easyocr_use_gpu': self.easyocr_use_gpu,
                 'custom_tesseract_path': tesseract_path_to_save,
                 'deepl_api_key': self.deepl_api_key,
                 'use_deepl': self.use_deepl,
@@ -1576,14 +1783,30 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     log_error(f"Error creating config directory: {config_dir}", e)
                     # Nếu không tạo được thư mục, thử ghi trực tiếp
             
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-        except (IOError, PermissionError) as e:
-            log_error("Lỗi ghi file cấu hình (quyền truy cập)", e)
-            self.log(f"Lỗi lưu cấu hình (quyền truy cập): {e}")
+            # Ghi file với error handling
+            try:
+                with open(self.config_file, 'w', encoding='utf-8', errors='replace') as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                    f.flush()  # Force write to disk
+            except (IOError, PermissionError, OSError) as file_err:
+                log_error("Lỗi ghi file cấu hình (quyền truy cập hoặc I/O)", file_err)
+                try:
+                    self.log(f"Lỗi lưu cấu hình (quyền truy cập): {file_err}")
+                except Exception:
+                    pass  # UI log failed, ignore
+                return  # Don't continue if file write failed
+        except (json.JSONEncodeError, ValueError) as json_err:
+            log_error("Lỗi encode JSON cấu hình", json_err)
+            try:
+                self.log(f"Lỗi lưu cấu hình (JSON error): {json_err}")
+            except Exception:
+                pass
         except Exception as e:
-            log_error("Lỗi lưu cấu hình", e)
-            self.log(f"Lỗi lưu cấu hình: {e}")
+            log_error("Lỗi lưu cấu hình (unexpected error)", e)
+            try:
+                self.log(f"Lỗi lưu cấu hình: {e}")
+            except Exception:
+                pass
     
     def select_region(self):
         """Open region selection window"""
@@ -1695,9 +1918,22 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.easyocr_handler.set_source_language(self.source_language)
         
         # Fallback: khởi tạo lại EasyOCR reader nếu đang dùng EasyOCR và không có handler
-        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE and not self.easyocr_handler:
-            self.easyocr_reader = None  # Reset để khởi tạo lại với ngôn ngữ mới
-            self.initialize_easyocr_reader()
+        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
+            if HANDLERS_AVAILABLE and not self.easyocr_handler:
+                try:
+                    self.easyocr_handler = EasyOCRHandler(
+                        source_language=self.source_language,
+                        use_gpu=self.easyocr_use_gpu
+                    )
+                except Exception as e:
+                    log_error("Lỗi khởi tạo EasyOCR handler khi đổi ngôn ngữ", e)
+                    # Nếu handler khởi tạo thất bại, fallback về reader cũ
+                    self.easyocr_handler = None
+                    self.easyocr_reader = None  # Reset để khởi tạo lại với ngôn ngữ mới
+                    self.initialize_easyocr_reader()
+            elif not HANDLERS_AVAILABLE:
+                self.easyocr_reader = None  # Reset để khởi tạo lại với ngôn ngữ mới
+                self.initialize_easyocr_reader()
     
     def clear_translation_history(self):
         """Xóa toàn bộ lịch sử dịch trong overlay"""
@@ -1731,8 +1967,26 @@ Chúc bạn sử dụng công cụ hiệu quả!
             
             # Khởi tạo lại OCR engine nếu cần
             if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-                # Chỉ khởi tạo nếu không dùng handlers
-                if not self.easyocr_handler:
+                # Khởi tạo handler với GPU option nếu dùng handlers
+                if HANDLERS_AVAILABLE:
+                    try:
+                        if self.easyocr_handler:
+                            self.easyocr_handler = None  # Reset để khởi tạo lại với GPU option mới
+                        self.easyocr_handler = EasyOCRHandler(
+                            source_language=self.source_language,
+                            use_gpu=self.easyocr_use_gpu
+                        )
+                    except Exception as e:
+                        log_error(f"Lỗi khởi tạo EasyOCR handler khi chuyển engine", e)
+                        self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
+                        # Nếu handler khởi tạo thất bại, fallback về reader cũ
+                        self.easyocr_handler = None
+                        # Reset reader cũ nếu có
+                        if hasattr(self, 'easyocr_reader'):
+                            self.easyocr_reader = None
+                        self.initialize_easyocr_reader()
+                # Hoặc khởi tạo reader trực tiếp nếu không dùng handlers
+                else:
                     # Reset reader cũ nếu có
                     if hasattr(self, 'easyocr_reader') and old_engine == "easyocr":
                         self.easyocr_reader = None
@@ -1750,10 +2004,60 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Hiển thị Tesseract path
                 self.tesseract_path_label_widget.grid()
                 self.tesseract_path_label_frame.grid()
+                # Ẩn EasyOCR GPU option
+                if hasattr(self, 'easyocr_gpu_frame'):
+                    self.easyocr_gpu_frame.grid_remove()
             else:
                 # Ẩn Tesseract path khi dùng EasyOCR
                 self.tesseract_path_label_widget.grid_remove()
                 self.tesseract_path_label_frame.grid_remove()
+                # Hiển thị EasyOCR GPU option
+                if hasattr(self, 'easyocr_gpu_frame'):
+                    self.easyocr_gpu_frame.grid()
+    
+    def on_easyocr_gpu_change(self):
+        """Callback khi người dùng thay đổi GPU option"""
+        if not hasattr(self, 'easyocr_gpu_var'):
+            return
+        
+        gpu_option = self.easyocr_gpu_var.get()
+        if gpu_option == "auto":
+            self.easyocr_use_gpu = None
+        elif gpu_option == "cpu":
+            self.easyocr_use_gpu = False
+        elif gpu_option == "gpu":
+            self.easyocr_use_gpu = True
+        
+        self.save_config()
+        
+        # Nếu đang dùng EasyOCR và reader đã được khởi tạo, cần khởi tạo lại
+        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
+            # Reset handler và reader để khởi tạo lại với GPU option mới
+            if HANDLERS_AVAILABLE:
+                try:
+                    if self.easyocr_handler:
+                        self.easyocr_handler = None
+                    # Khởi tạo lại handler với GPU option mới
+                    self.easyocr_handler = EasyOCRHandler(
+                        source_language=self.source_language,
+                        use_gpu=self.easyocr_use_gpu
+                    )
+                    self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Handler đã được khởi tạo lại.")
+                except Exception as e:
+                    log_error(f"Lỗi khởi tạo EasyOCR handler với GPU option {gpu_option}", e)
+                    self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
+                    # Nếu handler khởi tạo thất bại, fallback về reader cũ
+                    self.easyocr_handler = None
+                    if hasattr(self, 'easyocr_reader'):
+                        self.easyocr_reader = None
+                    self.initialize_easyocr_reader()
+                    self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Fallback reader sẽ được khởi tạo lại.")
+            else:
+                # Không dùng handlers, reset reader cũ
+                if hasattr(self, 'easyocr_reader'):
+                    self.easyocr_reader = None
+                self.initialize_easyocr_reader()
+                self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Reader sẽ được khởi tạo lại.")
     
     def initialize_easyocr_reader(self):
         """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers"""
@@ -1808,13 +2112,80 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         os.environ['PYTHONWARNINGS'] = 'ignore'
                         
                         import easyocr
+                        
+                        # Determine GPU usage based on user preference
+                        use_gpu = False
+                        gpu_name = None
+                        gpu_debug = ""
+                        
+                        if self.easyocr_use_gpu is True:
+                            # Force GPU mode
+                            try:
+                                import torch
+                                if torch.cuda.is_available():
+                                    use_gpu = True
+                                    gpu_name = torch.cuda.get_device_name(0)
+                                    gpu_debug = f"GPU mode forced by user: {gpu_name}"
+                                    log_error(f"[INFO] {gpu_debug}")
+                                    self.log(f"GPU mode forced: {gpu_name}")
+                                else:
+                                    gpu_debug = "GPU mode requested but GPU not available. Falling back to CPU."
+                                    log_error(f"[WARNING] {gpu_debug}")
+                                    self.log("GPU requested but not available. Using CPU mode.")
+                            except Exception as e:
+                                gpu_debug = f"Error checking GPU: {str(e)}"
+                                log_error(f"[WARNING] {gpu_debug}")
+                        elif self.easyocr_use_gpu is False:
+                            # Force CPU mode
+                            use_gpu = False
+                            gpu_debug = "CPU mode forced by user"
+                            log_error(f"[INFO] {gpu_debug}")
+                            self.log("CPU mode forced by user")
+                        else:
+                            # Auto-detect (default)
+                            try:
+                                import torch
+                                gpu_debug = f"PyTorch version: {torch.__version__}"
+                                
+                                if torch.cuda.is_available():
+                                    use_gpu = True
+                                    gpu_name = torch.cuda.get_device_name(0)
+                                    cuda_version = getattr(torch.version, 'cuda', 'Unknown')
+                                    device_count = torch.cuda.device_count()
+                                    gpu_debug += f", CUDA: {cuda_version}, Devices: {device_count}, GPU: {gpu_name}"
+                                    log_error(f"[INFO] GPU auto-detected: {gpu_name}. EasyOCR will use GPU mode.")
+                                    self.log(f"GPU auto-detected: {gpu_name}. EasyOCR will use GPU mode.")
+                                else:
+                                    cuda_version = getattr(torch.version, 'cuda', None)
+                                    if cuda_version:
+                                        gpu_debug += f", CUDA version: {cuda_version}, but torch.cuda.is_available() = False"
+                                    else:
+                                        gpu_debug += ", PyTorch installed without CUDA support"
+                                    log_error(f"[INFO] No GPU detected. {gpu_debug}")
+                                    self.log("No GPU detected. EasyOCR will use CPU mode.")
+                            except ImportError:
+                                gpu_debug = "PyTorch not installed"
+                                log_error(f"[INFO] {gpu_debug}. EasyOCR will use CPU mode.")
+                                self.log("PyTorch not available for GPU detection. EasyOCR will use CPU mode.")
+                            except Exception as e:
+                                gpu_debug = f"Error: {str(e)}"
+                                log_error(f"[INFO] GPU detection error: {gpu_debug}. EasyOCR will use CPU mode.")
+                                self.log("GPU detection error. EasyOCR will use CPU mode.")
+                        
                         # Tối ưu cho long sessions: reuse reader, không reload model
                         self.easyocr_reader = easyocr.Reader(
                             [easyocr_lang], 
-                            gpu=False, 
+                            gpu=use_gpu, 
                             verbose=False,
                             download_enabled=False  # Không download lại nếu đã có
                         )
+                        
+                        if use_gpu:
+                            log_error(f"[INFO] EasyOCR initialized with GPU acceleration ({gpu_name})")
+                            self.log(f"EasyOCR initialized with GPU acceleration ({gpu_name})")
+                        else:
+                            log_error("[INFO] EasyOCR initialized with CPU mode")
+                            self.log("EasyOCR initialized with CPU mode")
                 finally:
                     # Khôi phục stderr
                     sys.stderr = old_stderr
@@ -1832,6 +2203,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
         try:
             interval_ms = int(self.interval_var.get())
             self.update_interval = interval_ms / 1000.0
+            # Update adaptive scan interval base
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             self.save_config()
             self.log(f"Đã thay đổi khoảng thời gian cập nhật thành: {interval_ms}ms")
         except ValueError as e:
@@ -1844,6 +2219,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
             # Speed optimized: minimal UI processing, fastest updates, minimal visual effects
             # Also update interval for maximum speed
             self.update_interval = 0.1  # 100ms for fastest updates
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             # Sync với Tab Cài Đặt - cập nhật interval_var nếu đã được tạo
             if hasattr(self, 'interval_var'):
                 self.interval_var.set("100")
@@ -1871,6 +2249,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         elif preset_type == 'balanced':
             # Balanced: good quality and speed - optimized for most games
             self.update_interval = 0.15  # 150ms for balanced speed
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             # Sync với Tab Cài Đặt - cập nhật interval_var nếu đã được tạo
             if hasattr(self, 'interval_var'):
                 self.interval_var.set("150")
@@ -1898,6 +2279,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         elif preset_type == 'quality':
             # Quality optimized: best readability, slightly slower for accuracy
             self.update_interval = 0.2  # 200ms for quality (default)
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             # Sync với Tab Cài Đặt - cập nhật interval_var nếu đã được tạo
             if hasattr(self, 'interval_var'):
                 self.interval_var.set("200")
@@ -1925,6 +2309,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         elif preset_type == 'default':
             # Default settings (optimized defaults)
             self.update_interval = 0.2  # 200ms default
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             # Sync với Tab Cài Đặt - cập nhật interval_var nếu đã được tạo
             if hasattr(self, 'interval_var'):
                 self.interval_var.set("200")
@@ -1956,7 +2343,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             # Reset update interval to default (200ms)
             self.update_interval = 0.2
             self.base_scan_interval = int(self.update_interval * 1000)  # 200ms
-            self.current_scan_interval = self.base_scan_interval
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
             
             # Reset source and target languages to defaults
             self.source_language = "eng"
@@ -3392,16 +3780,21 @@ Chúc bạn sử dụng công cụ hiệu quả!
         while self.is_running:
             now = time.monotonic()
             try:
-                # Adaptive scan interval based on queue load
-                # EasyOCR: tăng interval base để giảm CPU
-                base_interval = self.update_interval * 1.5 if self.ocr_engine == "easyocr" else self.update_interval
+                # Update adaptive scan interval based on OCR load
+                self.update_adaptive_scan_interval()
+                
+                # Use adaptive scan interval (convert from ms to seconds)
+                adaptive_scan_interval_ms = self.current_scan_interval
+                base_interval_sec = adaptive_scan_interval_ms / 1000.0
+                
+                # Additional queue-based adjustment
                 q_fullness = self.ocr_queue.qsize() / (self.ocr_queue.maxsize or 1)
                 if q_fullness > 0.7:
-                    current_scan_interval_sec = base_interval * (1 + q_fullness)
+                    current_scan_interval_sec = base_interval_sec * (1 + q_fullness)
                 elif q_fullness > 0.4:
-                    current_scan_interval_sec = base_interval * 1.25
+                    current_scan_interval_sec = base_interval_sec * 1.25
                 else:
-                    current_scan_interval_sec = max(min_interval, current_scan_interval_sec * 0.95)
+                    current_scan_interval_sec = max(min_interval, base_interval_sec)
                 
                 if now - last_cap_time < current_scan_interval_sec:
                     sleep_duration = current_scan_interval_sec - (now - last_cap_time)
@@ -3473,8 +3866,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import sys
                 sys.stderr.write(f"Error logging capture thread finish: {e}\n")
-            except:
-                pass
+            except Exception:
+                pass  # Ultimate fallback - cannot log
     
     def run_ocr_thread(self):
         """OCR thread - lấy từ queue, xử lý OCR, gọi async translation"""
@@ -3485,8 +3878,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import sys
                 sys.stderr.write(f"Error logging OCR thread start: {e}\n")
-            except:
-                pass
+            except Exception:
+                pass  # Ultimate fallback - cannot log
         last_ocr_proc_time = 0
         min_ocr_interval = 0.05  # Giảm từ 0.1 xuống 0.05 để xử lý nhanh hơn
         similar_texts_count = 0
@@ -3570,14 +3963,20 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         else:
                             text = self.remove_text_after_last_punctuation_mark(text)
                             
-                elif self.ocr_engine == "easyocr" and self.easyocr_handler:
-                    # Sử dụng EasyOCR Handler
-                    img_np = np.array(img)
-                    text = self.easyocr_handler.recognize(img_np, confidence_threshold=0.3)
-                    if text:
-                        text = self.clean_ocr_text(text)
+                elif self.ocr_engine == "easyocr":
+                    # Sử dụng EasyOCR - ưu tiên handler nếu có, fallback về reader cũ
+                    if self.easyocr_handler:
+                        # Sử dụng EasyOCR Handler (tối ưu hơn)
+                        img_np = np.array(img)
+                        text = self.easyocr_handler.recognize(img_np, confidence_threshold=0.3)
+                        if text:
+                            text = self.clean_ocr_text(text)
+                    else:
+                        # Fallback: sử dụng EasyOCR reader cũ (nếu handler không available)
+                        processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
+                        text = self.perform_easyocr(processed_images)
                 else:
-                    # Fallback: code cũ (nếu handlers không available)
+                    # Tesseract mode
                     if self.ocr_engine == "tesseract":
                         # Convert PIL to numpy array
                         img_np = np.array(img)
@@ -3612,10 +4011,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                                 text = ""
                             else:
                                 text = self.remove_text_after_last_punctuation_mark(text)
-                    else:
-                        # EasyOCR fallback
-                        processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
-                        text = self.perform_easyocr(processed_images)
                 
                 if not text or self.is_placeholder_text(text):
                     self.text_stability_counter = 0
@@ -3686,8 +4081,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import sys
                 sys.stderr.write(f"Error logging OCR thread finish: {e}\n")
-            except:
-                pass
+            except Exception:
+                pass  # Ultimate fallback - cannot log
     
     def run_translation_thread(self):
         """Translation thread - xử lý translation từ queue (legacy, ít dùng)"""
@@ -3698,8 +4093,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import sys
                 sys.stderr.write(f"Error logging translation thread start: {e}\n")
-            except:
-                pass
+            except Exception:
+                pass  # Ultimate fallback - cannot log
         
         while self.is_running:
             try:
@@ -3724,8 +4119,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import sys
                 sys.stderr.write(f"Error logging translation thread finish: {e}\n")
-            except:
-                pass
+            except Exception:
+                pass  # Ultimate fallback - cannot log
     
     def start_async_translation(self, text_to_translate, ocr_sequence_number):
         """Start async translation processing"""
@@ -3818,10 +4213,15 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Ngay cả khi translated_text là None hoặc empty, vẫn cần check sequence
                 if self.overlay_window and self.is_running:
                     try:
-                        self.overlay_window.after(
-                            0, self.process_translation_response,
-                            translated_text, translation_sequence, clean_text, ocr_sequence_number
-                        )
+                        # Thread-safe: check if window still exists before scheduling
+                        if hasattr(self.overlay_window, 'winfo_exists') and self.overlay_window.winfo_exists():
+                            self.overlay_window.after(
+                                0, self.process_translation_response,
+                                translated_text, translation_sequence, clean_text, ocr_sequence_number
+                            )
+                    except (RuntimeError, tk.TclError) as e:
+                        # Window destroyed or main loop not running, ignore
+                        pass
                     except Exception as e:
                         log_error("Error scheduling translation response", e)
                 else:
@@ -3835,7 +4235,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.active_translation_calls.discard(translation_sequence)
     
     def process_translation_response(self, translation_result, translation_sequence, original_text, ocr_sequence_number):
-        """Process translation response với chronological order enforcement"""
+        """Process translation response với chronological order enforcement - thread-safe"""
         try:
             # QUAN TRỌNG: Kiểm tra chronological order TRƯỚC, không phụ thuộc vào translation_result
             if not hasattr(self, 'last_displayed_translation_sequence'):
@@ -3861,9 +4261,14 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Hiển thị error nhưng vẫn update sequence
                 if self.overlay_window:
                     try:
-                        self.overlay_window.after(
-                            0, self.update_overlay, original_text, f"Lỗi Dịch Thuật:\n{translation_result}"
-                        )
+                        # Thread-safe: check if window still exists
+                        if hasattr(self.overlay_window, 'winfo_exists') and self.overlay_window.winfo_exists():
+                            self.overlay_window.after(
+                                0, self.update_overlay, original_text, f"Lỗi Dịch Thuật:\n{translation_result}"
+                            )
+                    except (RuntimeError, tk.TclError) as e:
+                        # Window destroyed, ignore
+                        pass
                     except Exception as e:
                         log_error("Error displaying error message in overlay", e)
                 self.last_displayed_translation_sequence = translation_sequence
@@ -3873,9 +4278,14 @@ Chúc bạn sử dụng công cụ hiệu quả!
             if isinstance(translation_result, str) and translation_result.strip():
                 if self.overlay_window:
                     try:
-                        self.overlay_window.after(
-                            0, self.update_overlay, original_text, translation_result
-                        )
+                        # Thread-safe: check if window still exists
+                        if hasattr(self.overlay_window, 'winfo_exists') and self.overlay_window.winfo_exists():
+                            self.overlay_window.after(
+                                0, self.update_overlay, original_text, translation_result
+                            )
+                    except (RuntimeError, tk.TclError) as e:
+                        # Window destroyed, ignore
+                        pass
                     except Exception as e:
                         log_error("Error scheduling overlay update", e)
                 self.last_displayed_translation_sequence = translation_sequence
@@ -3884,6 +4294,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Empty hoặc invalid result, vẫn update sequence để không block dialog tiếp theo
                 self.last_displayed_translation_sequence = translation_sequence
         
+        except (RuntimeError, tk.TclError) as e:
+            # Tkinter error - window destroyed or main loop not running
+            # Ignore silently to avoid spam
+            pass
         except Exception as e:
             log_error("Error processing translation response", e)
     
@@ -3897,15 +4311,28 @@ Chúc bạn sử dụng công cụ hiệu quả!
         pass
     
     def update_overlay(self, original, translated):
-        """Cập nhật cửa sổ overlay với bản dịch mới"""
+        """Cập nhật cửa sổ overlay với bản dịch mới - thread-safe (chỉ gọi từ main thread)"""
         if not self.overlay_window:
             return
         
         try:
+            # Thread-safe check: verify window still exists
+            if hasattr(self.overlay_window, 'winfo_exists') and not self.overlay_window.winfo_exists():
+                return
+            
             # Cập nhật text widget bản dịch (có thể cuộn)
             if hasattr(self, 'translation_text') and self.translation_text:
                 try:
-                    self.translation_text.config(state=tk.NORMAL)
+                    # Verify widget still exists (winfo_exists() returns True if exists)
+                    widget_exists = True
+                    if hasattr(self.translation_text, 'winfo_exists'):
+                        try:
+                            widget_exists = self.translation_text.winfo_exists()
+                        except (RuntimeError, tk.TclError):
+                            widget_exists = False
+                    
+                    if widget_exists:
+                        self.translation_text.config(state=tk.NORMAL)
                     
                     if self.overlay_keep_history:
                         # Append mode: thêm bản dịch mới vào cuối với spacing (không dùng ký tự)
@@ -3928,11 +4355,24 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         self.translation_text.see('1.0')
                     
                     self.translation_text.config(state=tk.DISABLED)
+                except (RuntimeError, tk.TclError) as e:
+                    # Widget destroyed or main loop not running, ignore
+                    pass
                 except Exception as e:
                     log_error("Error updating translation text widget", e)
             elif hasattr(self, 'translation_label') and self.translation_label:
                 # Fallback về label nếu text widget không tồn tại
                 try:
+                    # Verify label still exists
+                    label_exists = True
+                    if hasattr(self.translation_label, 'winfo_exists'):
+                        try:
+                            label_exists = self.translation_label.winfo_exists()
+                        except (RuntimeError, tk.TclError):
+                            label_exists = False
+                    
+                    if not label_exists:
+                        return
                     if self.overlay_keep_history:
                         # Append cho label (giới hạn độ dài)
                         current_text = self.translation_label.cget('text')
@@ -3947,31 +4387,64 @@ Chúc bạn sử dụng công cụ hiệu quả!
                             self.translation_label.config(text=translated)
                     else:
                         self.translation_label.config(text=translated)
+                except (RuntimeError, tk.TclError) as e:
+                    # Widget destroyed or main loop not running, ignore
+                    pass
                 except Exception as e:
                     log_error("Error updating translation label", e)
             
             # Update original text if enabled (chỉ hiển thị text gốc mới nhất)
             if self.overlay_show_original and hasattr(self, 'original_label') and self.original_label:
                 try:
-                    # Truncate if too long, but show more characters
-                    max_length = self.overlay_width // 8  # Rough character estimate
-                    display_original = original[:max_length] + "..." if len(original) > max_length else original
-                    self.original_label.config(text=f"Nguyên bản: {display_original}")
+                    # Verify label still exists
+                    label_exists = True
+                    if hasattr(self.original_label, 'winfo_exists'):
+                        try:
+                            label_exists = self.original_label.winfo_exists()
+                        except (RuntimeError, tk.TclError):
+                            label_exists = False
+                    
+                    if label_exists:
+                        # Truncate if too long, but show more characters
+                        max_length = self.overlay_width // 8  # Rough character estimate
+                        display_original = original[:max_length] + "..." if len(original) > max_length else original
+                        self.original_label.config(text=f"Nguyên bản: {display_original}")
+                except (RuntimeError, tk.TclError) as e:
+                    # Widget destroyed or main loop not running, ignore
+                    pass
                 except Exception as e:
                     log_error("Error updating original label in overlay", e)
+        except (RuntimeError, tk.TclError) as e:
+            # Tkinter error - window destroyed or main loop not running
+            # Ignore silently to avoid spam
+            pass
         except Exception as e:
             # Log error but don't block if window was closed or widget doesn't exist
             log_error("Error updating overlay", e)
     
     def log(self, message):
-        """Thêm message vào status log"""
+        """Thêm message vào status log - thread-safe"""
         # Kiểm tra xem status_text đã được tạo chưa
         if not hasattr(self, 'status_text') or self.status_text is None:
             return
-        timestamp = time.strftime("%H:%M:%S")
-        self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.status_text.see(tk.END)
-        self.root.update_idletasks()
+        
+        # Thread-safe: schedule call vào main thread
+        def _log_in_main_thread():
+            try:
+                if hasattr(self, 'status_text') and self.status_text is not None:
+                    timestamp = time.strftime("%H:%M:%S")
+                    self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
+                    self.status_text.see(tk.END)
+            except (RuntimeError, tk.TclError):
+                # Widget đã bị destroy, ignore
+                pass
+        
+        try:
+            # Schedule vào main thread
+            self.root.after(0, _log_in_main_thread)
+        except (RuntimeError, tk.TclError):
+            # Root window đã bị destroy, fallback to file log
+            log_error(f"[LOG] {message}")
     
     def on_closing(self):
         """Handle window close event"""

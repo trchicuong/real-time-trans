@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════════════════════════════
-    HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
+    HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC (BẢN CUDA)
     Tác giả: trchicuong
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -75,14 +75,20 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
 
 3. ENGINE OCR:
    - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
-   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU hơn
+   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU/GPU hơn
    - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
+   
+4. EASYOCR MODE (chỉ hiện khi chọn EasyOCR):
+   - Tự động: Công cụ tự động chọn CPU hoặc GPU phù hợp (khuyến nghị)
+   - CPU: Sử dụng CPU để xử lý (tiết kiệm GPU cho ứng dụng khác)
+   - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
+   - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
 
-4. NGÔN NGỮ ĐÍCH:
+5. NGÔN NGỮ ĐÍCH:
    - Chọn ngôn ngữ muốn dịch sang
    - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
 
-5. DỊCH VỤ DỊCH THUẬT:
+6. DỊCH VỤ DỊCH THUẬT:
    - Google Translate: Miễn phí, không cần API key
    - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
      - Nếu chọn DeepL, nhập API Key vào ô tương ứng
@@ -143,6 +149,7 @@ BƯỚC 5: Sử dụng màn hình dịch
 • CHỌN ENGINE OCR:
   - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
   - EasyOCR thường chính xác hơn cho game và các văn bản tiếng Nhật, Hàn, Trung
+  - Nếu chọn EasyOCR và máy có card đồ họa NVIDIA, chọn "GPU" trong "EasyOCR Mode" để chạy mượt hơn
 
 • CHỌN DỊCH VỤ DỊCH THUẬT:
   - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
@@ -179,11 +186,13 @@ BƯỚC 5: Sử dụng màn hình dịch
   - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
 
 • CHẬM HOẶC LAG:
+  - Nếu dùng EasyOCR: Chọn "GPU" trong "EasyOCR Mode" nếu máy có card đồ họa NVIDIA
   - Tăng khoảng thời gian cập nhật (200-300ms)
   - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
   - Chọn vùng chụp nhỏ hơn
   - Tắt hiển thị văn bản gốc
   - Đóng các ứng dụng khác đang chạy
+  - Thử chuyển sang Tesseract nếu EasyOCR quá chậm
 
 • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
   - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
@@ -257,6 +266,7 @@ TAB 1: CÀI ĐẶT
 • Ngôn ngữ nguồn (OCR)
 • Khoảng thời gian cập nhật
 • Engine OCR (Tesseract/EasyOCR)
+• EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
 • Đường dẫn Tesseract (khi chọn Tesseract)
 • Ngôn ngữ đích
 • Dịch vụ dịch thuật (Google/DeepL)
