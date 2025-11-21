@@ -10,7 +10,7 @@ import subprocess
 import shutil
 
 # Version number
-VERSION = "v1.0.3"
+VERSION = "v1.0.4"
 
 def get_timestamp_code():
     """Get timestamp code in HHMMSS format"""
@@ -45,7 +45,7 @@ def build_executable():
             print("Using PyInstaller directly...")
             result = subprocess.run([
                 "pyinstaller",
-                "--onefile",
+                "--onedir",
                 "--windowed",
                 "--name", "RealTimeScreenTranslator",
                 "translator.py"
@@ -54,8 +54,9 @@ def build_executable():
                 print(f"Build error: {result.stderr}")
                 return False
         
-        # Check if executable exists
-        exe_path = os.path.join("dist", "RealTimeScreenTranslator.exe")
+        # Check if executable folder exists (onedir mode creates a folder)
+        exe_folder = os.path.join("dist", "RealTimeScreenTranslator")
+        exe_path = os.path.join(exe_folder, "RealTimeScreenTranslator.exe")
         if not os.path.exists(exe_path):
             print(f"Executable not found at {exe_path}")
             return False
@@ -73,33 +74,39 @@ def create_package():
     
     print(f"\nCreating package: {zip_name}")
     
-    # Files to include
-    files_to_include = []
+    # Check if executable folder exists (onedir mode)
+    exe_folder = os.path.join("dist", "RealTimeScreenTranslator")
+    exe_path = os.path.join(exe_folder, "RealTimeScreenTranslator.exe")
     
-    # Add executable
-    exe_path = os.path.join("dist", "RealTimeScreenTranslator.exe")
-    if os.path.exists(exe_path):
-        files_to_include.append(("RealTimeScreenTranslator.exe", exe_path))
-    else:
+    if not os.path.exists(exe_path):
         print(f"Warning: Executable not found at {exe_path}")
         print("Please build the executable first using build.bat or pyinstaller")
         return False
     
-    # Add HUONG_DAN.txt
-    if os.path.exists("HUONG_DAN.txt"):
-        files_to_include.append(("HUONG_DAN.txt", "HUONG_DAN.txt"))
-    else:
-        print("Warning: HUONG_DAN.txt not found")
+    if not os.path.isdir(exe_folder):
+        print(f"Warning: Executable folder not found at {exe_folder}")
+        return False
     
     # Create zip file
     try:
         with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for arcname, filepath in files_to_include:
-                if os.path.exists(filepath):
-                    print(f"  Adding: {arcname}")
-                    zipf.write(filepath, arcname)
-                else:
-                    print(f"  Warning: {filepath} not found, skipping")
+            # Add all files from the executable folder
+            print(f"  Adding folder: RealTimeScreenTranslator/")
+            for root, dirs, files in os.walk(exe_folder):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Calculate relative path from exe_folder
+                    arcname = os.path.relpath(file_path, os.path.dirname(exe_folder))
+                    arcname = os.path.join("RealTimeScreenTranslator", arcname)
+                    print(f"    Adding: {arcname}")
+                    zipf.write(file_path, arcname)
+            
+            # Add HUONG_DAN.txt to root of zip
+            if os.path.exists("HUONG_DAN.txt"):
+                print(f"  Adding: HUONG_DAN.txt")
+                zipf.write("HUONG_DAN.txt", "HUONG_DAN.txt")
+            else:
+                print("Warning: HUONG_DAN.txt not found")
         
         print(f"\n✓ Package created successfully: {zip_name}")
         print(f"  Size: {os.path.getsize(zip_name) / (1024*1024):.2f} MB")
@@ -115,7 +122,8 @@ def main():
     print("=" * 60)
     
     # Check if we need to build
-    exe_path = os.path.join("dist", "RealTimeScreenTranslator.exe")
+    exe_folder = os.path.join("dist", "RealTimeScreenTranslator")
+    exe_path = os.path.join(exe_folder, "RealTimeScreenTranslator.exe")
     if not os.path.exists(exe_path):
         print("\nExecutable not found. Building...")
         if not build_executable():

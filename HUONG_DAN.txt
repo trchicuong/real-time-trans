@@ -84,6 +84,19 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
    - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
    - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
 
+4a. EASYOCR MULTI-SCALE (chỉ hiện khi chọn EasyOCR):
+   - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
+   - Chỉ nên bật khi cần độ chính xác cao với text khó đọc
+   - Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 2-3 lần
+
+4b. TESSERACT OPTIONS (chỉ hiện khi chọn Tesseract):
+   - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
+     • Chỉ nên bật khi cần độ chính xác cao
+     • Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 1.5-2 lần
+   - Bật Text Region Detection: Phát hiện vùng có text trước khi OCR
+     • Hữu ích với ảnh phức tạp có nhiều vùng không phải text
+     • Lưu ý: Chậm hơn do phải phát hiện vùng trước
+
 5. NGÔN NGỮ ĐÍCH:
    - Chọn ngôn ngữ muốn dịch sang
    - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
@@ -215,6 +228,10 @@ BƯỚC 5: Sử dụng màn hình dịch
 • Giao diện tùy chỉnh hoàn toàn với preset nhanh
 • Hỗ trợ nhiều ngôn ngữ OCR và dịch thuật
 • Khóa màn hình dịch để tránh di chuyển nhầm khi chơi game
+• Tùy chọn Multi-scale cho cả Tesseract và EasyOCR để tăng độ chính xác
+• Tùy chọn Text Region Detection cho Tesseract để xử lý ảnh phức tạp
+• GPU acceleration cho EasyOCR (tự động phát hiện NVIDIA GPU)
+• Tự động giảm dịch trùng với cơ chế kiểm tra độ ổn định text
 
 ═══════════════════════════════════════════════════════════════════════════════
 6. LƯU Ý QUAN TRỌNG
@@ -267,6 +284,8 @@ TAB 1: CÀI ĐẶT
 • Khoảng thời gian cập nhật
 • Engine OCR (Tesseract/EasyOCR)
 • EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
+• EasyOCR Multi-scale - chỉ hiện khi chọn EasyOCR
+• Tesseract Options (Multi-scale, Text Region Detection) - chỉ hiện khi chọn Tesseract
 • Đường dẫn Tesseract (khi chọn Tesseract)
 • Ngôn ngữ đích
 • Dịch vụ dịch thuật (Google/DeepL)

@@ -313,10 +313,21 @@ class ScreenTranslator:
         # EasyOCR GPU option (None = auto-detect, True = force GPU, False = force CPU)
         self.easyocr_use_gpu = None  # Default: auto-detect
         
+        # EasyOCR Multi-scale option (True = enable, False = disable)
+        self.easyocr_multi_scale = False  # Default: disabled (tối ưu tốc độ)
+        
+        # Tesseract options
+        self.tesseract_multi_scale = False  # Default: disabled (tối ưu tốc độ)
+        self.tesseract_text_region_detection = False  # Default: disabled (tốn thời gian)
+        
         # OCR Handlers (nếu có) - cần source_language đã được khởi tạo
         # Note: easyocr_handler sẽ được khởi tạo lại khi cần với GPU option
         if HANDLERS_AVAILABLE:
-            self.tesseract_handler = TesseractOCRHandler(source_language=self.source_language)
+            self.tesseract_handler = TesseractOCRHandler(
+                source_language=self.source_language,
+                enable_multi_scale=self.tesseract_multi_scale,
+                enable_text_region_detection=self.tesseract_text_region_detection
+            )
             self.easyocr_handler = None  # Sẽ khởi tạo khi cần với GPU option
         else:
             self.tesseract_handler = None
@@ -378,7 +389,7 @@ class ScreenTranslator:
         self.prev_ocr_text = ""
         self.last_processed_subtitle = None
         self.last_successful_translation_time = 0.0
-        self.stable_threshold = 0  # Số lần text phải giống nhau để coi là stable (0 = instant)
+        self.stable_threshold = 2  # Số lần text phải giống nhau để coi là stable (2 = cần ít nhất 2 lần đọc giống nhau để giảm dịch trùng)
         self.min_translation_interval = 0.1  # Khoảng thời gian tối thiểu giữa các lần dịch (giảm từ 0.2 để nhanh hơn)
         
         # Threading infrastructure
@@ -402,7 +413,12 @@ class ScreenTranslator:
         self.active_translation_calls = set()
         # Tăng concurrent calls để xử lý nhanh hơn
         self.max_concurrent_ocr_calls = 8
-        self.max_concurrent_translation_calls = 6
+        # Giảm concurrent translation calls để tránh quá tải với text dài
+        self.max_concurrent_translation_calls = 3
+        
+        # Giới hạn độ dài text để tránh xử lý quá tải (tăng để giữ độ chính xác)
+        self.max_text_length_for_translation = 400  # Ký tự (tăng từ 300)
+        self.max_text_length_hard_limit = 800  # Hard limit - skip nếu vượt quá (tăng từ 500)
         
         # Long session optimization: periodic cleanup
         self.last_cleanup_time = time.time()
@@ -448,7 +464,8 @@ class ScreenTranslator:
                 try:
                     self.easyocr_handler = EasyOCRHandler(
                         source_language=self.source_language,
-                        use_gpu=self.easyocr_use_gpu
+                        use_gpu=self.easyocr_use_gpu,
+                        enable_multi_scale=self.easyocr_multi_scale
                     )
                 except Exception as e:
                     log_error("Lỗi khởi tạo EasyOCR handler từ config", e)
@@ -902,6 +919,38 @@ class ScreenTranslator:
         )
         self.tesseract_browse_button.pack(side=tk.LEFT)
         
+        # Tesseract Options (only show when Tesseract is selected)
+        self.tesseract_options_row = 4
+        self.tesseract_options_frame = ttk.Frame(settings_frame)
+        self.tesseract_options_frame.grid(row=self.tesseract_options_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        
+        self.tesseract_multi_scale_var = tk.BooleanVar(value=self.tesseract_multi_scale)
+        tesseract_multi_scale_check = ttk.Checkbutton(
+            self.tesseract_options_frame,
+            text="Bật Multi-scale (Tăng độ chính xác nhưng chậm hơn ~1.5-2x)",
+            variable=self.tesseract_multi_scale_var,
+            command=self.on_tesseract_multi_scale_change
+        )
+        tesseract_multi_scale_check.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
+        
+        self.tesseract_text_region_var = tk.BooleanVar(value=self.tesseract_text_region_detection)
+        tesseract_text_region_check = ttk.Checkbutton(
+            self.tesseract_options_frame,
+            text="Bật Text Region Detection (Phát hiện vùng text trước, chậm hơn)",
+            variable=self.tesseract_text_region_var,
+            command=self.on_tesseract_text_region_change
+        )
+        tesseract_text_region_check.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
+        
+        # Info label
+        tesseract_info = tk.Label(
+            self.tesseract_options_frame,
+            text="(Chỉ nên bật khi cần độ chính xác cao)",
+            font=("Arial", 8),
+            fg="gray"
+        )
+        tesseract_info.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
+        
         # EasyOCR GPU Option (only show when EasyOCR is selected)
         self.easyocr_gpu_row = 3
         self.easyocr_gpu_frame = ttk.Frame(settings_frame)
@@ -971,6 +1020,29 @@ class ScreenTranslator:
             fg="gray" if not gpu_available else "green"
         )
         self.gpu_info_label.pack(side=tk.LEFT, padx=5)
+        
+        # EasyOCR Multi-scale Option (only show when EasyOCR is selected)
+        self.easyocr_multi_scale_row = 4
+        self.easyocr_multi_scale_frame = ttk.Frame(settings_frame)
+        self.easyocr_multi_scale_frame.grid(row=self.easyocr_multi_scale_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        
+        self.easyocr_multi_scale_var = tk.BooleanVar(value=self.easyocr_multi_scale)
+        multi_scale_check = ttk.Checkbutton(
+            self.easyocr_multi_scale_frame,
+            text="Bật Multi-scale (Tăng độ chính xác nhưng chậm hơn ~2-3x)",
+            variable=self.easyocr_multi_scale_var,
+            command=self.on_easyocr_multi_scale_change
+        )
+        multi_scale_check.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
+        
+        # Info label
+        multi_scale_info = tk.Label(
+            self.easyocr_multi_scale_frame,
+            text="(Chỉ nên bật khi cần độ chính xác cao với text khó đọc)",
+            font=("Arial", 8),
+            fg="gray"
+        )
+        multi_scale_info.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
         # Translation Service Selection
         translation_frame = ttk.LabelFrame(parent, text="Dịch Thuật", padding=10)
@@ -1451,6 +1523,19 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
       - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
       - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
    
+   4a. EASYOCR MULTI-SCALE (chỉ hiện khi chọn EasyOCR):
+      - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
+      - Chỉ nên bật khi cần độ chính xác cao với text khó đọc
+      - Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 2-3 lần
+   
+   4b. TESSERACT OPTIONS (chỉ hiện khi chọn Tesseract):
+      - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
+        • Chỉ nên bật khi cần độ chính xác cao
+        • Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 1.5-2 lần
+      - Bật Text Region Detection: Phát hiện vùng có text trước khi OCR
+        • Hữu ích với ảnh phức tạp có nhiều vùng không phải text
+        • Lưu ý: Chậm hơn do phải phát hiện vùng trước
+   
    5. NGÔN NGỮ ĐÍCH:
       - Chọn ngôn ngữ muốn dịch sang
       - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
@@ -1596,6 +1681,8 @@ BƯỚC 5: Sử dụng màn hình dịch
    • Khoảng thời gian cập nhật
    • Engine OCR (Tesseract/EasyOCR)
    • EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
+   • EasyOCR Multi-scale - chỉ hiện khi chọn EasyOCR
+   • Tesseract Options (Multi-scale, Text Region Detection) - chỉ hiện khi chọn Tesseract
    • Đường dẫn Tesseract (khi chọn Tesseract)
    • Ngôn ngữ đích
    • Dịch vụ dịch thuật (Google/DeepL)
@@ -1669,6 +1756,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.easyocr_use_gpu = True  # Force GPU
             else:
                 self.easyocr_use_gpu = False  # Force CPU
+            
+            # Load EasyOCR Multi-scale option
+            self.easyocr_multi_scale = config.get('easyocr_multi_scale', False)
+            
+            # Load Tesseract options
+            self.tesseract_multi_scale = config.get('tesseract_multi_scale', False)
+            self.tesseract_text_region_detection = config.get('tesseract_text_region_detection', False)
             self.base_scan_interval = int(self.update_interval * 1000)
             if not self.overload_detected:
                 self.current_scan_interval = self.base_scan_interval
@@ -1744,6 +1838,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'update_interval': self.update_interval,
                 'ocr_engine': self.ocr_engine,
                 'easyocr_use_gpu': self.easyocr_use_gpu,
+                'easyocr_multi_scale': self.easyocr_multi_scale,
+                'tesseract_multi_scale': self.tesseract_multi_scale,
+                'tesseract_text_region_detection': self.tesseract_text_region_detection,
                 'custom_tesseract_path': tesseract_path_to_save,
                 'deepl_api_key': self.deepl_api_key,
                 'use_deepl': self.use_deepl,
@@ -1914,6 +2011,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
         # Cập nhật handlers với ngôn ngữ mới
         if self.tesseract_handler:
             self.tesseract_handler.set_source_language(self.source_language)
+        # Khởi tạo lại Tesseract handler với options mới nếu cần
+        if self.ocr_engine == "tesseract" and HANDLERS_AVAILABLE:
+            try:
+                self.tesseract_handler = TesseractOCRHandler(
+                    source_language=self.source_language,
+                    enable_multi_scale=self.tesseract_multi_scale,
+                    enable_text_region_detection=self.tesseract_text_region_detection
+                )
+            except Exception as e:
+                log_error("Lỗi khởi tạo Tesseract handler khi đổi ngôn ngữ", e)
         if self.easyocr_handler:
             self.easyocr_handler.set_source_language(self.source_language)
         
@@ -1923,7 +2030,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 try:
                     self.easyocr_handler = EasyOCRHandler(
                         source_language=self.source_language,
-                        use_gpu=self.easyocr_use_gpu
+                        use_gpu=self.easyocr_use_gpu,
+                        enable_multi_scale=self.easyocr_multi_scale
                     )
                 except Exception as e:
                     log_error("Lỗi khởi tạo EasyOCR handler khi đổi ngôn ngữ", e)
@@ -1966,7 +2074,18 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.update_ocr_engine_ui()
             
             # Khởi tạo lại OCR engine nếu cần
-            if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
+            if self.ocr_engine == "tesseract" and HANDLERS_AVAILABLE:
+                # Khởi tạo lại Tesseract handler với options
+                try:
+                    self.tesseract_handler = TesseractOCRHandler(
+                        source_language=self.source_language,
+                        enable_multi_scale=self.tesseract_multi_scale,
+                        enable_text_region_detection=self.tesseract_text_region_detection
+                    )
+                    self.log("Đã khởi tạo lại Tesseract handler")
+                except Exception as e:
+                    log_error("Lỗi khởi tạo Tesseract handler khi chuyển engine", e)
+            elif self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
                 # Khởi tạo handler với GPU option nếu dùng handlers
                 if HANDLERS_AVAILABLE:
                     try:
@@ -2001,19 +2120,27 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Cập nhật UI dựa trên OCR engine được chọn"""
         if hasattr(self, 'tesseract_path_label_frame') and hasattr(self, 'tesseract_path_label_widget'):
             if self.ocr_engine == "tesseract":
-                # Hiển thị Tesseract path
+                # Hiển thị Tesseract path và options
                 self.tesseract_path_label_widget.grid()
                 self.tesseract_path_label_frame.grid()
-                # Ẩn EasyOCR GPU option
+                if hasattr(self, 'tesseract_options_frame'):
+                    self.tesseract_options_frame.grid()
+                # Ẩn EasyOCR GPU option và Multi-scale option
                 if hasattr(self, 'easyocr_gpu_frame'):
                     self.easyocr_gpu_frame.grid_remove()
+                if hasattr(self, 'easyocr_multi_scale_frame'):
+                    self.easyocr_multi_scale_frame.grid_remove()
             else:
-                # Ẩn Tesseract path khi dùng EasyOCR
+                # Ẩn Tesseract path và options khi dùng EasyOCR
                 self.tesseract_path_label_widget.grid_remove()
                 self.tesseract_path_label_frame.grid_remove()
-                # Hiển thị EasyOCR GPU option
+                if hasattr(self, 'tesseract_options_frame'):
+                    self.tesseract_options_frame.grid_remove()
+                # Hiển thị EasyOCR GPU option và Multi-scale option
                 if hasattr(self, 'easyocr_gpu_frame'):
                     self.easyocr_gpu_frame.grid()
+                if hasattr(self, 'easyocr_multi_scale_frame'):
+                    self.easyocr_multi_scale_frame.grid()
     
     def on_easyocr_gpu_change(self):
         """Callback khi người dùng thay đổi GPU option"""
@@ -2040,7 +2167,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     # Khởi tạo lại handler với GPU option mới
                     self.easyocr_handler = EasyOCRHandler(
                         source_language=self.source_language,
-                        use_gpu=self.easyocr_use_gpu
+                        use_gpu=self.easyocr_use_gpu,
+                        enable_multi_scale=self.easyocr_multi_scale
                     )
                     self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Handler đã được khởi tạo lại.")
                 except Exception as e:
@@ -2058,6 +2186,88 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     self.easyocr_reader = None
                 self.initialize_easyocr_reader()
                 self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Reader sẽ được khởi tạo lại.")
+    
+    def on_easyocr_multi_scale_change(self):
+        """Callback khi người dùng thay đổi Multi-scale option"""
+        if not hasattr(self, 'easyocr_multi_scale_var'):
+            return
+        
+        self.easyocr_multi_scale = self.easyocr_multi_scale_var.get()
+        self.save_config()
+        
+        # Nếu đang dùng EasyOCR và handler đã được khởi tạo, cần khởi tạo lại
+        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
+            if HANDLERS_AVAILABLE:
+                try:
+                    if self.easyocr_handler:
+                        # Cập nhật multi-scale setting trong handler hiện tại
+                        self.easyocr_handler.enable_multi_scale = self.easyocr_multi_scale
+                        self.log(f"Đã {'bật' if self.easyocr_multi_scale else 'tắt'} Multi-scale cho EasyOCR.")
+                    else:
+                        # Nếu chưa có handler, khởi tạo mới
+                        self.easyocr_handler = EasyOCRHandler(
+                            source_language=self.source_language,
+                            use_gpu=self.easyocr_use_gpu,
+                            enable_multi_scale=self.easyocr_multi_scale
+                        )
+                        self.log(f"Đã khởi tạo EasyOCR handler với Multi-scale: {self.easyocr_multi_scale}.")
+                except Exception as e:
+                    log_error(f"Lỗi cập nhật EasyOCR Multi-scale setting", e)
+                    self.log(f"Lỗi cập nhật Multi-scale: {e}.")
+    
+    def on_tesseract_multi_scale_change(self):
+        """Callback khi người dùng thay đổi Tesseract Multi-scale option"""
+        if not hasattr(self, 'tesseract_multi_scale_var'):
+            return
+        
+        self.tesseract_multi_scale = self.tesseract_multi_scale_var.get()
+        self.save_config()
+        
+        # Nếu đang dùng Tesseract và handler đã được khởi tạo, cập nhật setting
+        if self.ocr_engine == "tesseract" and HANDLERS_AVAILABLE:
+            try:
+                if self.tesseract_handler:
+                    # Cập nhật multi-scale setting trong handler hiện tại
+                    self.tesseract_handler.enable_multi_scale = self.tesseract_multi_scale
+                    self.log(f"Đã {'bật' if self.tesseract_multi_scale else 'tắt'} Multi-scale cho Tesseract.")
+                else:
+                    # Nếu chưa có handler, khởi tạo mới
+                    self.tesseract_handler = TesseractOCRHandler(
+                        source_language=self.source_language,
+                        enable_multi_scale=self.tesseract_multi_scale,
+                        enable_text_region_detection=self.tesseract_text_region_detection
+                    )
+                    self.log(f"Đã khởi tạo Tesseract handler với Multi-scale: {self.tesseract_multi_scale}.")
+            except Exception as e:
+                log_error(f"Lỗi cập nhật Tesseract Multi-scale setting", e)
+                self.log(f"Lỗi cập nhật Multi-scale: {e}.")
+    
+    def on_tesseract_text_region_change(self):
+        """Callback khi người dùng thay đổi Tesseract Text Region Detection option"""
+        if not hasattr(self, 'tesseract_text_region_var'):
+            return
+        
+        self.tesseract_text_region_detection = self.tesseract_text_region_var.get()
+        self.save_config()
+        
+        # Nếu đang dùng Tesseract và handler đã được khởi tạo, cập nhật setting
+        if self.ocr_engine == "tesseract" and HANDLERS_AVAILABLE:
+            try:
+                if self.tesseract_handler:
+                    # Cập nhật text region detection setting trong handler hiện tại
+                    self.tesseract_handler.enable_text_region_detection = self.tesseract_text_region_detection
+                    self.log(f"Đã {'bật' if self.tesseract_text_region_detection else 'tắt'} Text Region Detection cho Tesseract.")
+                else:
+                    # Nếu chưa có handler, khởi tạo mới
+                    self.tesseract_handler = TesseractOCRHandler(
+                        source_language=self.source_language,
+                        enable_multi_scale=self.tesseract_multi_scale,
+                        enable_text_region_detection=self.tesseract_text_region_detection
+                    )
+                    self.log(f"Đã khởi tạo Tesseract handler với Text Region Detection: {self.tesseract_text_region_detection}.")
+            except Exception as e:
+                log_error(f"Lỗi cập nhật Tesseract Text Region Detection setting", e)
+                self.log(f"Lỗi cập nhật Text Region Detection: {e}.")
     
     def initialize_easyocr_reader(self):
         """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers"""
@@ -2402,6 +2612,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     self.tesseract_handler.set_source_language(self.source_language)
                 except Exception as e:
                     log_error("Error updating Tesseract handler after reset", e)
+            # Khởi tạo lại Tesseract handler với options mới
+            if self.ocr_engine == "tesseract" and HANDLERS_AVAILABLE:
+                try:
+                    self.tesseract_handler = TesseractOCRHandler(
+                        source_language=self.source_language,
+                        enable_multi_scale=self.tesseract_multi_scale,
+                        enable_text_region_detection=self.tesseract_text_region_detection
+                    )
+                except Exception as e:
+                    log_error("Error reinitializing Tesseract handler after reset", e)
             if self.easyocr_handler:
                 try:
                     self.easyocr_handler.set_source_language(self.source_language)
@@ -3555,6 +3775,59 @@ Chúc bạn sử dụng công cụ hiệu quả!
         
         return text
     
+    def chunk_text_for_translation(self, text, max_chunk_length=300):
+        """
+        Chia text dài thành các đoạn nhỏ hơn để dịch nhanh hơn
+        Tách theo câu (sentence boundaries) để giữ ngữ nghĩa
+        """
+        if not text or len(text) <= max_chunk_length:
+            return [text] if text else []
+        
+        chunks = []
+        # Tách theo sentence boundaries (., !, ?, ...)
+        sentence_endings = re.compile(r'([.!?…]+[\s\n]*)')
+        sentences = sentence_endings.split(text)
+        
+        current_chunk = ""
+        for i, part in enumerate(sentences):
+            # Nếu part là sentence ending, thêm vào chunk hiện tại
+            if sentence_endings.match(part):
+                current_chunk += part
+                if len(current_chunk.strip()) > 0:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+            else:
+                # Nếu thêm part này vượt quá max_chunk_length, tách chunk
+                if len(current_chunk) + len(part) > max_chunk_length and current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = part
+                else:
+                    current_chunk += part
+        
+        # Thêm chunk cuối cùng
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        # Nếu vẫn có chunk quá dài, cắt cứng
+        final_chunks = []
+        for chunk in chunks:
+            if len(chunk) <= max_chunk_length:
+                final_chunks.append(chunk)
+            else:
+                # Cắt cứng theo từ
+                words = chunk.split()
+                current = ""
+                for word in words:
+                    if len(current) + len(word) + 1 > max_chunk_length and current:
+                        final_chunks.append(current.strip())
+                        current = word
+                    else:
+                        current += (" " + word if current else word)
+                if current:
+                    final_chunks.append(current.strip())
+        
+        return final_chunks if final_chunks else [text[:max_chunk_length]]
+    
     def format_dialog_text(self, text):
         """
         Format dialog text bằng cách thêm line breaks trước dashes sau sentence-ending punctuation
@@ -3650,53 +3923,111 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def is_text_stable(self, text):
         """
         Kiểm tra độ ổn định văn bản
+        Sử dụng text_history để track và so sánh với các lần đọc trước
+        Yêu cầu ít nhất stable_threshold lần đọc giống nhau để giảm dịch trùng
         """
-        if not text or len(text) < 2:
-            return False
-        
-        # Tính similarity với text gần nhất
-        if len(self.text_history) > 0:
-            last_text = self.text_history[-1]
+        try:
+            if not text or len(text) < 2:
+                return False
             
-            # Nếu text giống hệt, coi là stable ngay
-            if text == last_text:
+            # Tính similarity với text gần nhất trong history
+            if len(self.text_history) > 0:
+                last_text = self.text_history[-1]
+                
+                # Nếu text giống hệt với lần đọc trước, kiểm tra số lần liên tiếp
+                if text == last_text:
+                    # Đếm số lần text này xuất hiện liên tiếp trong history
+                    consecutive_count = 1
+                    for i in range(len(self.text_history) - 2, -1, -1):
+                        if self.text_history[i] == text:
+                            consecutive_count += 1
+                        else:
+                            break
+                    
+                    # Cần ít nhất stable_threshold lần đọc giống nhau
+                    if consecutive_count >= self.stable_threshold:
+                        return True
+                
+                # Tính similarity dựa trên word overlap (tốt hơn character matching)
+                words1 = set(text.lower().split())
+                words2 = set(last_text.lower().split())
+                
+                if words1 and words2:
+                    intersection = words1.intersection(words2)
+                    union = words1.union(words2)
+                    similarity = len(intersection) / len(union) if union else 0
+                    
+                    # Nếu similarity > 0.9, kiểm tra số lần đọc tương tự
+                    if similarity > 0.9:
+                        # Đếm số lần đọc tương tự liên tiếp
+                        similar_count = 1
+                        for i in range(len(self.text_history) - 2, -1, -1):
+                            prev_text = self.text_history[i]
+                            prev_words = set(prev_text.lower().split())
+                            prev_intersection = words1.intersection(prev_words)
+                            prev_union = words1.union(prev_words)
+                            prev_similarity = len(prev_intersection) / len(prev_union) if prev_union else 0
+                            if prev_similarity > 0.9:
+                                similar_count += 1
+                            else:
+                                break
+                        
+                        # Cần ít nhất stable_threshold lần đọc tương tự
+                        if similar_count >= self.stable_threshold:
+                            return True
+                    
+                    # Nếu độ dài tương tự và similarity > 0.6, cũng kiểm tra
+                    if abs(len(text) - len(last_text)) <= 3 and similarity > 0.6:
+                        # Đếm số lần đọc tương tự liên tiếp
+                        similar_count = 1
+                        for i in range(len(self.text_history) - 2, -1, -1):
+                            prev_text = self.text_history[i]
+                            if abs(len(text) - len(prev_text)) <= 3:
+                                prev_words = set(prev_text.lower().split())
+                                prev_intersection = words1.intersection(prev_words)
+                                prev_union = words1.union(prev_words)
+                                prev_similarity = len(prev_intersection) / len(prev_union) if prev_union else 0
+                                if prev_similarity > 0.6:
+                                    similar_count += 1
+                                else:
+                                    break
+                            else:
+                                break
+                        
+                        # Cần ít nhất stable_threshold lần đọc tương tự
+                        if similar_count >= self.stable_threshold:
+                            return True
+            
+            # Add to history (chỉ thêm nếu chưa có trong history hoặc khác với lần cuối)
+            if len(self.text_history) == 0 or text != self.text_history[-1]:
+                self.text_history.append(text)
+                if len(self.text_history) > self.history_size:
+                    self.text_history.pop(0)
+            
+            # For very short text, cần ít nhất stable_threshold lần đọc giống nhau
+            if len(text) < 10:
+                if len(self.text_history) >= self.stable_threshold:
+                    # Kiểm tra xem có đủ số lần đọc giống nhau liên tiếp không
+                    all_same = True
+                    start_idx = len(self.text_history) - self.stable_threshold
+                    for i in range(start_idx, len(self.text_history)):
+                        if self.text_history[i] != text:
+                            all_same = False
+                            break
+                    if all_same:
+                        return True
+                return False
+            
+            # Với text dài hơn, cần ít nhất stable_threshold lần đọc trong history
+            if len(self.text_history) >= self.stable_threshold:
+                # Kiểm tra xem có đủ số lần đọc tương tự không
                 return True
             
-            # Tính similarity dựa trên word overlap (tốt hơn character matching)
-            words1 = set(text.lower().split())
-            words2 = set(last_text.lower().split())
-            
-            if words1 and words2:
-                intersection = words1.intersection(words2)
-                union = words1.union(words2)
-                similarity = len(intersection) / len(union) if union else 0
-                
-                # Nếu similarity > 0.9, coi là stable
-                if similarity > 0.9:
-                    return True
-                
-                # Nếu độ dài tương tự và similarity > 0.6, cũng coi là stable
-                if abs(len(text) - len(last_text)) <= 3 and similarity > 0.6:
-                    return True
-        
-        # Add to history
-        self.text_history.append(text)
-        if len(self.text_history) > self.history_size:
-            self.text_history.pop(0)
-        
-        # For very short text hoặc first reading, cần ít nhất 2 lần đọc giống nhau
-        if len(text) < 10:
-            # Với text ngắn, cần ít nhất 2 lần đọc giống nhau
-            if len(self.text_history) >= 2:
-                if self.text_history[-1] == self.text_history[-2]:
-                    return True
             return False
-        
-        # Với text dài hơn, cần ít nhất 1 lần đọc ổn định
-        if len(self.text_history) >= 2:
-            return True
-        
-        return False
+        except Exception as e:
+            log_error("Error in is_text_stable()", e)
+            # Trả về False để an toàn (không dịch nếu có lỗi)
+            return False
     
     def translate_with_deepl(self, text):
         """
@@ -4017,7 +4348,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     self.previous_text = ""
                     continue
                 
-                # Tính similarity (0.9 threshold)
+                # Tính similarity (0.9 threshold) để tracking
                 similarity = self.calculate_text_similarity(text, prev_ocr_text)
                 if similarity > 0.9:
                     similar_texts_count += 1
@@ -4029,15 +4360,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 if similar_texts_count > 2 and (now - self.last_successful_translation_time) < 1.0:
                     continue
                 
-                # Kiểm tra text stability
-                if text == self.previous_text:
-                    self.text_stability_counter += 1
-                else:
-                    self.text_stability_counter = 0
-                    self.previous_text = text
-                
-                # Chỉ translate khi text đã stable
-                if self.text_stability_counter >= self.stable_threshold:
+                # Sử dụng is_text_stable() để kiểm tra độ ổn định text
+                # Hàm này sử dụng text_history và similarity để đánh giá
+                if self.is_text_stable(text):
                     stable_text = text
                     
                     # Kiểm tra duplicate subtitle
@@ -4045,15 +4370,22 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         self.last_successful_translation_time = now
                         continue
                     
+                    # Kiểm tra độ dài text - skip nếu quá dài (tránh quá tải)
+                    if len(stable_text) > self.max_text_length_hard_limit:
+                        log_error(f"Text quá dài ({len(stable_text)} chars), bỏ qua để tránh quá tải")
+                        continue
+                    
                     # Tính adaptive translation interval (tối ưu để nhanh hơn)
                     s_count = len(re.findall(r'[.!?]+', stable_text)) + 1
                     txt_len = len(stable_text)
-                    # Giảm base interval và tối ưu công thức
+                    # Adaptive interval: text dài hơn cần thời gian lâu hơn
+                    # Tăng interval cho text dài để tránh quá tải
+                    length_factor = 1.0 + (txt_len / 500)  # Mỗi 500 chars tăng 1x interval
                     adaptive_trans_interval = max(
                         0.05,  # Giảm từ 0.2 xuống 0.05 để nhanh hơn
                         min(
-                            self.min_translation_interval,
-                            self.min_translation_interval * (0.3 + (0.05 * s_count) + (txt_len / 2000))  # Tối ưu công thức
+                            self.min_translation_interval * 2,  # Max 2x base interval
+                            self.min_translation_interval * (0.3 + (0.05 * s_count) + (txt_len / 1000)) * length_factor
                         )
                     )
                     
@@ -4067,6 +4399,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         self.text_stability_counter = 0
                         self.last_processed_subtitle = stable_text
                         similar_texts_count = 0
+                        # Clear text history sau khi đã dịch để tránh ảnh hưởng đến text mới
+                        self.text_history = []
             
             except Exception as e_ocr_loop:
                 log_error("OCR thread error", e_ocr_loop)
@@ -4142,11 +4476,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
             log_error("Error starting async translation", e)
     
     def process_translation_async(self, text_to_translate, translation_sequence, ocr_sequence_number):
-        """Process translation asynchronously"""
+        """Process translation asynchronously với text chunking cho text dài"""
         try:
             clean_text = self.clean_ocr_text(text_to_translate)
             
             if self.is_placeholder_text(clean_text):
+                return
+            
+            # Skip nếu text quá dài (hard limit)
+            if len(clean_text) > self.max_text_length_hard_limit:
+                log_error(f"Text quá dài ({len(clean_text)} chars) trong process_translation_async, bỏ qua")
                 return
             
             if clean_text and len(clean_text) > 2:
@@ -4156,7 +4495,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 
                 if self.cache_manager:
                     # Sử dụng cache_manager (LRU + file cache)
-                    translated_text = self.cache_manager.get(clean_text, self.source_language, self.target_language, translator_name)
+                    try:
+                        translated_text = self.cache_manager.get(clean_text, self.source_language, self.target_language, translator_name)
+                    except Exception as cache_err:
+                        log_error("Error getting translation from cache", cache_err)
+                        translated_text = None
                 else:
                     # Fallback: dùng translation_cache cũ
                     cache_key = clean_text.lower().strip()
@@ -4164,28 +4507,70 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         translated_text = self.translation_cache[cache_key]
                 
                 if not translated_text:
-                    # Translate - chỉ free services
-                    max_retries = 2
-                    for attempt in range(max_retries):
-                        try:
-                            # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
-                            if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
-                                translated_text = self.translate_with_deepl(clean_text)
-                            else:
-                                translated_text = self.translator.translate(clean_text)
-                            
-                            if self.is_error_message(translated_text) or self.is_placeholder_text(translated_text):
-                                translated_text = None
-                                break
-                            
-                            break
-                        except Exception as trans_error:
-                            if attempt < max_retries - 1:
-                                time.sleep(0.1 * (attempt + 1))
+                    # Chunk text nếu quá dài để dịch nhanh hơn
+                    if len(clean_text) > self.max_text_length_for_translation:
+                        # Chia text thành chunks và dịch từng chunk
+                        chunks = self.chunk_text_for_translation(clean_text, self.max_text_length_for_translation)
+                        translated_chunks = []
+                        
+                        for chunk in chunks:
+                            if not chunk or len(chunk.strip()) < 2:
                                 continue
-                            else:
-                                log_error("Translation failed after retries", trans_error)
-                                translated_text = None
+                            
+                            max_retries = 2
+                            chunk_translated = None
+                            for attempt in range(max_retries):
+                                try:
+                                    # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
+                                    if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                        chunk_translated = self.translate_with_deepl(chunk)
+                                    else:
+                                        chunk_translated = self.translator.translate(chunk)
+                                    
+                                    if self.is_error_message(chunk_translated) or self.is_placeholder_text(chunk_translated):
+                                        chunk_translated = None
+                                        break
+                                    
+                                    break
+                                except Exception as trans_error:
+                                    if attempt < max_retries - 1:
+                                        time.sleep(0.1 * (attempt + 1))
+                                        continue
+                                    else:
+                                        log_error(f"Translation failed for chunk ({len(chunk)} chars)", trans_error)
+                                        chunk_translated = None
+                            
+                            if chunk_translated:
+                                translated_chunks.append(chunk_translated)
+                            # Thêm delay nhỏ giữa các chunks để tránh quá tải API
+                            if len(chunks) > 1:
+                                time.sleep(0.1)
+                        
+                        # Ghép các chunks lại
+                        translated_text = " ".join(translated_chunks) if translated_chunks else None
+                    else:
+                        # Text ngắn, dịch bình thường
+                        max_retries = 2
+                        for attempt in range(max_retries):
+                            try:
+                                # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
+                                if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                    translated_text = self.translate_with_deepl(clean_text)
+                                else:
+                                    translated_text = self.translator.translate(clean_text)
+                                
+                                if self.is_error_message(translated_text) or self.is_placeholder_text(translated_text):
+                                    translated_text = None
+                                    break
+                                
+                                break
+                            except Exception as trans_error:
+                                if attempt < max_retries - 1:
+                                    time.sleep(0.1 * (attempt + 1))
+                                    continue
+                                else:
+                                    log_error("Translation failed after retries", trans_error)
+                                    translated_text = None
                     
                     # Cache result
                     if translated_text and not self.is_error_message(translated_text):
@@ -4195,7 +4580,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         # Store in cache
                         if self.cache_manager:
                             # Sử dụng cache_manager
-                            self.cache_manager.store(clean_text, self.source_language, self.target_language, translated_text, translator_name)
+                            try:
+                                self.cache_manager.store(clean_text, self.source_language, self.target_language, translated_text, translator_name)
+                            except Exception as cache_err:
+                                log_error("Error storing translation to cache", cache_err)
                         else:
                             # Fallback: dùng translation_cache cũ
                             cache_key = clean_text.lower().strip()

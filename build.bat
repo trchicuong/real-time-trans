@@ -18,14 +18,14 @@ set /p build_type="Enter choice (1 or 2): "
 if "%build_type%"=="2" (
     echo.
     echo Creating DEBUG executable (with console)...
-    pyinstaller --onefile --console --name "RealTimeScreenTranslator-DEBUG" --icon=NONE translator.py
+    pyinstaller --onedir --console --name "RealTimeScreenTranslator-DEBUG" --icon=NONE translator.py
 ) else (
     echo.
     echo Creating RELEASE executable (no console)...
     if exist build.spec (
         pyinstaller build.spec
     ) else (
-        pyinstaller --onefile --windowed --name "RealTimeScreenTranslator" --icon=NONE translator.py
+        pyinstaller --onedir --windowed --name "RealTimeScreenTranslator" --icon=NONE translator.py
     )
 )
 

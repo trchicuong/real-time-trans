@@ -43,13 +43,19 @@ def log_error(msg, exception=None):
 class TesseractOCRHandler:
     """Handler cho Tesseract OCR với các kỹ thuật tối ưu"""
     
-    def __init__(self, source_language='eng'):
+    def __init__(self, source_language='eng', enable_multi_scale=False, enable_text_region_detection=False):
+        """
+        Args:
+            source_language: Ngôn ngữ nguồn cho OCR
+            enable_multi_scale: True = enable multi-scale processing (chính xác hơn nhưng chậm hơn)
+            enable_text_region_detection: True = enable text region detection (tốn thời gian)
+        """
         self.source_language = source_language
         self.cached_prep_mode = None
         self.cached_tess_params = None
-        # Tắt mặc định để tránh chậm - có thể bật khi cần
-        self.enable_text_region_detection = False  # Text region detection (tốn thời gian)
-        self.enable_multi_scale = False  # Multi-scale processing (tốn thời gian)
+        # Có thể bật/tắt từ UI
+        self.enable_text_region_detection = enable_text_region_detection
+        self.enable_multi_scale = enable_multi_scale
         
     def set_source_language(self, lang):
         """Cập nhật source language và reset cache"""

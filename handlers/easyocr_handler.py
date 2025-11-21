@@ -126,11 +126,12 @@ def detect_gpu_availability():
 class EasyOCRHandler:
     """Handler cho EasyOCR với tối ưu CPU/GPU"""
     
-    def __init__(self, source_language='eng', use_gpu=None):
+    def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False):
         """
         Args:
             source_language: Ngôn ngữ nguồn cho OCR
             use_gpu: None = auto-detect, True = force GPU, False = force CPU
+            enable_multi_scale: True = enable multi-scale processing (chính xác hơn nhưng chậm hơn)
         """
         self.source_language = source_language
         self.reader = None
@@ -183,8 +184,14 @@ class EasyOCRHandler:
         self.last_result_text = ""
         self.last_result_hash = None
         
-        # Multi-scale processing
-        self.enable_multi_scale = True
+        # Multi-scale processing - có thể bật/tắt từ UI
+        self.enable_multi_scale = enable_multi_scale
+        
+        # Timeout cho OCR operations (giây) - tránh stuck
+        self.ocr_timeout = 10.0 if self.gpu_available else 15.0
+        
+        # Max text length để tránh xử lý text quá dài (tăng lên để giữ nhiều text hơn)
+        self.max_text_length = 800  # Ký tự (tăng từ 500 để giữ độ chính xác tốt hơn)
         
     def set_source_language(self, lang):
         """Cập nhật source language và reset reader"""
@@ -332,14 +339,15 @@ class EasyOCRHandler:
         w, h = img_pil.size
         max_dim = max(w, h)
         
-        # GPU mode: max 800px, CPU mode: max 600px (giảm CPU ~30% thêm)
-        max_size = 800 if self.gpu_available else 600
+        # GPU mode: max 900px, CPU mode: max 650px (cân bằng tốc độ và độ chính xác)
+        # EasyOCR vẫn khá chính xác với ảnh nhỏ, nhưng tăng một chút để giữ độ chính xác tốt
+        max_size = 900 if self.gpu_available else 650
         if max_dim > max_size:
             scale = max_size / max_dim
             new_w, new_h = int(w * scale), int(h * scale)
             img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # Multi-scale processing cho EasyOCR
+        # Multi-scale processing nếu được bật (chỉ cho CPU mode)
         if self.enable_multi_scale and not self.gpu_available:
             # Multi-scale chỉ cho CPU mode (GPU đã nhanh rồi)
             best_result = None
@@ -356,7 +364,31 @@ class EasyOCRHandler:
                     scaled_img = img_pil.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
                     img_array = np.array(scaled_img)
                     
-                    results = reader.readtext(img_array)
+                    # Thực hiện OCR với timeout
+                    import threading
+                    import queue
+                    
+                    result_queue = queue.Queue()
+                    error_queue = queue.Queue()
+                    
+                    def ocr_worker():
+                        try:
+                            results = reader.readtext(img_array)
+                            result_queue.put(results)
+                        except Exception as e:
+                            error_queue.put(e)
+                    
+                    ocr_thread = threading.Thread(target=ocr_worker, daemon=True)
+                    ocr_thread.start()
+                    ocr_thread.join(timeout=self.ocr_timeout)
+                    
+                    if ocr_thread.is_alive():
+                        continue  # Skip scale này nếu timeout
+                    
+                    if not error_queue.empty() or result_queue.empty():
+                        continue
+                    
+                    results = result_queue.get()
                     
                     texts = []
                     total_conf = 0.0
@@ -382,34 +414,109 @@ class EasyOCRHandler:
             
             self.last_call_time = time.monotonic()
             if best_result:
+                # Giới hạn độ dài text
+                if len(best_result) > self.max_text_length:
+                    best_result = best_result[:self.max_text_length] + "..."
                 self.last_result_text = best_result
+                # Clear GPU memory
+                if self.gpu_available:
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
                 return best_result
             return ""
-        else:
-            # Single scale (GPU mode hoặc multi-scale disabled)
-            # Convert PIL Image to numpy array cho EasyOCR
-            img_array = np.array(img_pil)
+        
+        # Single scale (GPU mode hoặc multi-scale disabled)
+        # Convert PIL Image to numpy array cho EasyOCR
+        img_array = np.array(img_pil)
+        
+        # Thực hiện OCR với timeout để tránh stuck
+        self.last_call_time = time.monotonic()
+        try:
+            # Sử dụng threading để implement timeout
+            import threading
+            import queue
             
-            # Thực hiện OCR
-            self.last_call_time = time.monotonic()
-            try:
-                results = reader.readtext(img_array)
-                
-                # Trích xuất text từ kết quả
-                texts = []
-                for (bbox, text, confidence) in results:
-                    if text and confidence > confidence_threshold:
-                        texts.append(text)
-                
-                result_text = ' '.join(texts).strip() if texts else ""
-                
-                # Cache result
-                self.last_result_text = result_text
-                
-                return result_text
-            except Exception as e:
-                log_error("Lỗi EasyOCR", e)
+            result_queue = queue.Queue()
+            error_queue = queue.Queue()
+            
+            def ocr_worker():
+                try:
+                    results = reader.readtext(img_array)
+                    result_queue.put(results)
+                except Exception as e:
+                    error_queue.put(e)
+            
+            # Start OCR in separate thread
+            ocr_thread = threading.Thread(target=ocr_worker, daemon=True)
+            ocr_thread.start()
+            ocr_thread.join(timeout=self.ocr_timeout)
+            
+            # Check if thread is still alive (timeout occurred)
+            if ocr_thread.is_alive():
+                log_error(f"EasyOCR timeout after {self.ocr_timeout}s - skipping this frame")
+                # Clear GPU memory if using GPU
+                if self.gpu_available:
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
                 return ""
+            
+            # Get results
+            if not error_queue.empty():
+                error = error_queue.get()
+                log_error("Lỗi EasyOCR", error)
+                return ""
+            
+            if result_queue.empty():
+                return ""
+            
+            results = result_queue.get()
+            
+            # Trích xuất text từ kết quả
+            texts = []
+            for (bbox, text, confidence) in results:
+                if text and confidence > confidence_threshold:
+                    texts.append(text)
+            
+            result_text = ' '.join(texts).strip() if texts else ""
+            
+            # Giới hạn độ dài text để tránh xử lý quá tải
+            if len(result_text) > self.max_text_length:
+                # Cắt text và thêm "..."
+                result_text = result_text[:self.max_text_length] + "..."
+                log_error(f"Text quá dài ({len(' '.join(texts))} chars), đã cắt xuống {self.max_text_length} chars")
+            
+            # Cache result
+            self.last_result_text = result_text
+            
+            # Clear GPU memory sau mỗi lần xử lý để tránh memory leak
+            if self.gpu_available:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            
+            return result_text
+        except Exception as e:
+            log_error("Lỗi EasyOCR", e)
+            # Clear GPU memory on error
+            if self.gpu_available:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            return ""
     
     def is_available(self):
         """Check if EasyOCR is available"""

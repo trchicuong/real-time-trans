@@ -134,11 +134,23 @@ python translator.py
      - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
    - **Engine OCR**: Chọn Tesseract hoặc EasyOCR
      - Tesseract: Mặc định, cần cài đặt Tesseract OCR, CPU usage thấp
+       - **Tesseract Options** (chỉ hiện khi chọn Tesseract):
+         - **Multi-scale**: Thử nhiều tỷ lệ scale (1.0x, 1.2x) để chọn kết quả tốt nhất
+           - Tăng độ chính xác ~5-10%
+           - Chậm hơn ~1.5-2x
+         - **Text Region Detection**: Phát hiện vùng có text trước khi OCR
+           - Hữu ích với ảnh phức tạp
+           - Chậm hơn do phải phát hiện vùng trước
      - EasyOCR: Chính xác hơn cho một số ngôn ngữ, cần cài: `pip install easyocr`
        - **EasyOCR Mode**: Chọn chế độ xử lý (chỉ hiện khi chọn EasyOCR)
          - **Tự động**: Tự động phát hiện và sử dụng GPU nếu có (mặc định)
          - **CPU**: Bắt buộc sử dụng CPU (khi muốn tiết kiệm GPU cho ứng dụng khác)
          - **GPU**: Bắt buộc sử dụng GPU (nếu có GPU và muốn tối ưu hiệu suất)
+       - **EasyOCR Multi-scale** (chỉ hiện khi chọn EasyOCR):
+         - Thử nhiều tỷ lệ scale (0.7x, 1.0x, 1.3x) để chọn kết quả tốt nhất
+         - Chỉ hoạt động ở CPU mode (GPU đã nhanh rồi)
+         - Tăng độ chính xác ~5-10%
+         - Chậm hơn ~2-3x
        - GPU mode giảm CPU usage từ 70-90% xuống <10%
        - CPU mode có throttling để giảm tải (1.5s interval)
    - **Ngôn ngữ đích**: Chọn ngôn ngữ muốn dịch sang
@@ -366,14 +378,18 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
     - Preprocessing: CLAHE (Contrast Limited Adaptive Histogram Equalization), morphological operations
     - Scaling: Tự động scale ảnh nhỏ lên để tăng độ chính xác
     - Confidence filtering: Lọc kết quả OCR dựa trên confidence score
-    - Multi-scale processing: Thử nhiều tỷ lệ scale để chọn kết quả tốt nhất (tùy chọn)
+    - Multi-scale processing: Thử nhiều tỷ lệ scale (1.0x, 1.2x) để chọn kết quả tốt nhất (tùy chọn, có thể bật/tắt từ UI)
+    - Text Region Detection: Phát hiện vùng có text trước khi OCR (tùy chọn, có thể bật/tắt từ UI)
   - `EasyOCRHandler`: Quản lý EasyOCR với tối ưu hiệu suất
     - GPU acceleration: Tự động phát hiện và sử dụng NVIDIA GPU (có thể chọn Tự động/CPU/GPU)
     - User control: Người dùng có thể chọn chế độ xử lý (auto-detect, force CPU, force GPU)
     - Throttling: Giới hạn tần suất gọi EasyOCR (1.5s CPU, 0.5s GPU)
-    - Image resizing: Resize ảnh để giảm tải xử lý (600px CPU, 800px GPU)
+    - Image resizing: Adaptive resize ảnh (GPU: max 900px, CPU: max 650px) để cân bằng tốc độ và độ chính xác
+    - Smart skip: Sử dụng image hash để skip frame trùng lặp
+    - Timeout protection: Timeout cho OCR operations (GPU: 10s, CPU: 15s) để tránh stuck
+    - Memory management: Tự động clear GPU cache sau mỗi OCR operation
     - Lazy initialization: Chỉ khởi tạo reader khi cần
-    - Multi-scale processing: Thử nhiều tỷ lệ scale cho CPU mode (tùy chọn)
+    - Multi-scale processing: Thử nhiều tỷ lệ scale (0.7x, 1.0x, 1.3x) cho CPU mode (tùy chọn, có thể bật/tắt từ UI)
   - `TranslationCacheManager`: Quản lý translation cache với LRU cache và file persistence
     - Encoding detection: Tự động phát hiện encoding với `chardet` (fallback nếu không có)
     - Robust file handling: Xử lý file cache bị corrupt, tự động backup và recreate
@@ -385,6 +401,10 @@ Nếu file `.exe` không mở được hoặc bị crash ngay lập tức:
   - Image hashing để bỏ qua frame trùng lặp
   - Throttling và deduplication để tránh rate limits
   - GPU acceleration cho EasyOCR (tự động phát hiện)
+  - Text stability detection: Sử dụng `is_text_stable()` với `stable_threshold=2` để giảm dịch trùng
+  - Text history tracking: Track text history để đánh giá độ ổn định trước khi dịch
+  - Adaptive translation intervals: Tự động điều chỉnh khoảng thời gian giữa các lần dịch dựa trên độ dài text
+  - Concurrent translation limit: Giới hạn số lượng translation calls đồng thời (max 3) để tránh quá tải
 
 ## 📁 Cấu Trúc Dự Án
 
@@ -426,18 +446,25 @@ real-time-trans/
   - **`tesseract_ocr_handler.py`**:
 
     - Class `TesseractOCRHandler`: Quản lý Tesseract OCR với các kỹ thuật tối ưu
-    - Preprocessing: adaptive thresholding, binary thresholding, grayscale conversion
+    - Preprocessing: CLAHE (Contrast Limited Adaptive Histogram Equalization), adaptive thresholding, binary thresholding, morphological operations
     - Scaling: Tự động scale ảnh nhỏ lên để tăng độ chính xác
     - Confidence filtering: Lọc kết quả OCR dựa trên confidence score
     - Gaming-specific configs: Tối ưu cho game với whitelist characters
+    - **Multi-scale processing**: Thử nhiều tỷ lệ scale (1.0x, 1.2x) để chọn kết quả tốt nhất (tùy chọn, có thể bật/tắt từ UI)
+    - **Text Region Detection**: Phát hiện vùng có text trước khi OCR (tùy chọn, có thể bật/tắt từ UI)
 
   - **`easyocr_handler.py`**:
 
-    - Class `EasyOCRHandler`: Quản lý EasyOCR với tối ưu CPU
-    - Throttling: Giới hạn tần suất gọi EasyOCR để giảm CPU
-    - Image resizing: Resize ảnh để giảm tải xử lý
+    - Class `EasyOCRHandler`: Quản lý EasyOCR với tối ưu hiệu suất
+    - GPU acceleration: Tự động phát hiện và sử dụng NVIDIA GPU (có thể chọn Tự động/CPU/GPU)
+    - Throttling: Giới hạn tần suất gọi EasyOCR để giảm CPU/GPU load
+    - Image resizing: Adaptive resize ảnh (GPU: max 900px, CPU: max 650px) để cân bằng tốc độ và độ chính xác
+    - Smart skip: Sử dụng image hash để skip frame trùng lặp
+    - Timeout protection: Timeout cho OCR operations (GPU: 10s, CPU: 15s) để tránh stuck
+    - Memory management: Tự động clear GPU cache sau mỗi OCR operation
     - Lazy initialization: Chỉ khởi tạo reader khi cần
     - Reader reuse: Tái sử dụng reader để tránh reload model
+    - **Multi-scale processing**: Thử nhiều tỷ lệ scale (0.7x, 1.0x, 1.3x) cho CPU mode (tùy chọn, có thể bật/tắt từ UI)
 
   - **`cache_manager.py`**:
     - Class `TranslationCacheManager`: Quản lý translation cache
