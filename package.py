@@ -95,8 +95,8 @@ def create_package():
             for root, dirs, files in os.walk(exe_folder):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    # Calculate relative path from exe_folder
-                    arcname = os.path.relpath(file_path, os.path.dirname(exe_folder))
+                    # Calculate relative path from exe_folder itself
+                    arcname = os.path.relpath(file_path, exe_folder)
                     arcname = os.path.join("RealTimeScreenTranslator", arcname)
                     print(f"    Adding: {arcname}")
                     zipf.write(file_path, arcname)
@@ -107,6 +107,13 @@ def create_package():
                 zipf.write("HUONG_DAN.txt", "HUONG_DAN.txt")
             else:
                 print("Warning: HUONG_DAN.txt not found")
+
+            # Add LICENSE to root of zip
+            if os.path.exists("LICENSE"):
+                print(f"  Adding: LICENSE")
+                zipf.write("LICENSE", "LICENSE")
+            else:
+                print("Warning: LICENSE not found")
         
         print(f"\n✓ Package created successfully: {zip_name}")
         print(f"  Size: {os.path.getsize(zip_name) / (1024*1024):.2f} MB")
