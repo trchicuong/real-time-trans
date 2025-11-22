@@ -1,315 +1,163 @@
-═══════════════════════════════════════════════════════════════════════════════
-    HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC (BẢN CUDA)
-    Tác giả: trchicuong
-═══════════════════════════════════════════════════════════════════════════════
+HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
+Tác giả: trchicuong
 
-═══════════════════════════════════════════════════════════════════════════════
 1. CÀI ĐẶT
-═══════════════════════════════════════════════════════════════════════════════
 
 BƯỚC 1: Cài đặt Tesseract OCR (BẮT BUỘC)
-─────────────────────────────────────────
-Công cụ cần Tesseract OCR để đọc văn bản trên màn hình.
+   • Windows: Tải từ https://github.com/UB-Mannheim/tesseract/wiki
+   • macOS: brew install tesseract
+   • Linux: sudo apt-get install tesseract-ocr (Ubuntu/Debian) hoặc sudo dnf install tesseract (Fedora)
+   • Nếu không tự tìm thấy → Dùng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn
 
-• Windows:
-  - Tải Tesseract OCR từ: https://github.com/UB-Mannheim/tesseract/wiki
-  - Chạy file cài đặt và làm theo hướng dẫn
-  - Ghi nhớ thư mục cài đặt (thường là C:\Program Files\Tesseract-OCR)
-  - Khi chạy công cụ lần đầu, nếu không tự động tìm thấy Tesseract,
-    bạn sẽ cần dùng nút "Duyệt" để chọn đường dẫn Tesseract
-
-• macOS:
-  - Mở Terminal và chạy: brew install tesseract
-
-• Linux:
-  - Ubuntu/Debian: sudo apt-get install tesseract-ocr
-  - Fedora: sudo dnf install tesseract
-
-BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (Nếu cần)
-───────────────────────────────────────────
-Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm:
-
-• Windows: 
-  - Tải từ: https://github.com/tesseract-ocr/tessdata
-  - Đặt các file .traineddata vào thư mục tessdata của Tesseract
-  - Thư mục tessdata thường ở: C:\Program Files\Tesseract-OCR\tessdata\
-
-• macOS/Linux:
-  - Ubuntu/Debian: sudo apt-get install tesseract-ocr-jpn  (ví dụ tiếng Nhật)
-  - macOS: brew install tesseract-lang  (bao gồm nhiều ngôn ngữ)
+BƯỚC 2: Dữ liệu ngôn ngữ (Nếu cần)
+   • Với ngôn ngữ không phải tiếng Anh (Nhật, Hàn, Trung...):
+   • Windows: Tải từ https://github.com/tesseract-ocr/tessdata, đặt vào C:\\Program Files\\Tesseract-OCR\\tessdata\\
+   • macOS/Linux: sudo apt-get install tesseract-ocr-jpn (ví dụ tiếng Nhật) hoặc brew install tesseract-lang
 
 BƯỚC 3: Chạy công cụ
-─────────────────────
-• Chạy trực tiếp file RealTimeScreenTranslator.exe
-• Cửa sổ công cụ sẽ hiện ra
+   • Chạy file RealTimeScreenTranslator.exe
+   • Nếu có cảnh báo Windows → "Run anyway"
+   • Đợi 5-10s để công cụ khởi động
 
-═══════════════════════════════════════════════════════════════════════════════
 2. BẮT ĐẦU SỬ DỤNG
-═══════════════════════════════════════════════════════════════════════════════
 
 BƯỚC 1: Chọn vùng chụp màn hình
-────────────────────────────────
-1. Mở ứng dụng của bạn (game, ứng dụng, v.v.) mà bạn muốn dịch
-2. Trong cửa sổ công cụ dịch, chọn tab "Cài Đặt"
-3. Nhấn nút "Chọn Vùng"
-4. Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
-5. Dùng chuột kéo để chọn vùng hộp thoại trong ứng dụng
-6. Thả chuột để xác nhận
-
-⚠️ LƯU Ý QUAN TRỌNG:
-   - Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
-   - Chọn vùng nhỏ hơn = dịch nhanh hơn
-   - Tránh chọn vùng quá lớn hoặc bao gồm nhiều phần không cần thiết
+   1. Mở ứng dụng/game cần dịch
+   2. Tab "Cài Đặt" → Nhấn "Chọn Vùng"
+   3. Kéo chuột chọn vùng hộp thoại → Thả chuột để xác nhận
+   
+   ⚠️ LƯU Ý: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
 
 BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
-──────────────────────────────────────────
-1. NGÔN NGỮ NGUỒN:
-   - Chọn ngôn ngữ của văn bản trong ứng dụng
-   - Ví dụ: Tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
-
-2. KHOẢNG THỜI GIAN CẬP NHẬT:
-   - Giá trị nhỏ (50-200ms): Dịch nhanh hơn nhưng tốn CPU hơn
-   - Giá trị lớn (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
-   - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
-   - Lưu ý: Preset sẽ tự động cập nhật giá trị này
-
-3. ENGINE OCR:
-   - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
-   - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU/GPU hơn
-   - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
+   1. NGÔN NGỮ NGUỒN: Chọn ngôn ngữ của văn bản trong ứng dụng
    
-4. EASYOCR MODE (chỉ hiện khi chọn EasyOCR):
-   - Tự động: Công cụ tự động chọn CPU hoặc GPU phù hợp (khuyến nghị)
-   - CPU: Sử dụng CPU để xử lý (tiết kiệm GPU cho ứng dụng khác)
-   - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
-   - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
+   2. KHOẢNG THỜI GIAN CẬP NHẬT:
+      - 100-200ms: Game (nhanh, tốn CPU)
+      - 200-300ms: Ứng dụng thường (cân bằng)
+      - Preset sẽ tự động cập nhật giá trị này
+   
+   3. ENGINE OCR:
+      - Tesseract: Mặc định, CPU thấp (dùng cho nhu cầu phổ thông)
+      - EasyOCR: Chính xác hơn, tốn CPU/GPU hơn (khuyến nghị cho game)
+      - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
+   
+   4. EASYOCR MODE (chỉ khi chọn EasyOCR):
+      - Tự động: Tự chọn CPU/GPU (khuyến nghị)
+      - CPU: Tiết kiệm GPU
+      - GPU: Nhanh hơn, giảm tải CPU (cần NVIDIA GPU)
+   
+   4a. EASYOCR MULTI-SCALE (chỉ khi chọn EasyOCR):
+      - Tăng độ chính xác nhưng chậm hơn 2-3 lần
+   
+   4b. TESSERACT OPTIONS (chỉ khi chọn Tesseract):
+      - Multi-scale: Tăng độ chính xác, chậm hơn 1.5-2 lần
+      - Text Region Detection: Phát hiện vùng text trước, hữu ích với ảnh phức tạp
+   
+   5. NGÔN NGỮ ĐÍCH: Chọn ngôn ngữ muốn dịch sang
+   
+   6. DỊCH VỤ DỊCH THUẬT:
+      - Google Translate: Miễn phí
+      - DeepL: Chất lượng tốt hơn, cần API key (https://www.deepl.com/pro-api)
+   
+   7. DEEPL CONTEXT WINDOW (chỉ khi chọn DeepL):
+      - Số subtitle trước đó dùng làm ngữ cảnh (0-3, mặc định: 2)
+      - Giúp dịch hội thoại chính xác hơn
 
-4a. EASYOCR MULTI-SCALE (chỉ hiện khi chọn EasyOCR):
-   - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
-   - Chỉ nên bật khi cần độ chính xác cao với text khó đọc
-   - Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 2-3 lần
-
-4b. TESSERACT OPTIONS (chỉ hiện khi chọn Tesseract):
-   - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
-     • Chỉ nên bật khi cần độ chính xác cao
-     • Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 1.5-2 lần
-   - Bật Text Region Detection: Phát hiện vùng có text trước khi OCR
-     • Hữu ích với ảnh phức tạp có nhiều vùng không phải text
-     • Lưu ý: Chậm hơn do phải phát hiện vùng trước
-
-5. NGÔN NGỮ ĐÍCH:
-   - Chọn ngôn ngữ muốn dịch sang
-   - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
-
-6. DỊCH VỤ DỊCH THUẬT:
-   - Google Translate: Miễn phí, không cần API key
-   - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
-     - Nếu chọn DeepL, nhập API Key vào ô tương ứng
-     - Lấy API key tại: https://www.deepl.com/pro-api
-
-BƯỚC 3: Tùy chỉnh giao diện dịch (Tab "Giao Diện Dịch")
-─────────────────────────────────────────────────────────
-1. CẤU HÌNH NHANH (PRESET) - Khuyến nghị sử dụng:
-   - "Tối Ưu Tốc Độ": Phù hợp game có hội thoại xuất hiện nhanh
-   - "Cân Bằng": Phù hợp hầu hết game và ứng dụng
-   - "Tối Ưu Chất Lượng": Phù hợp khi cần đọc kỹ, chất lượng cao
-   - "Mặc Định": Cài đặt mặc định
-   - ⚠️ Sau khi chọn preset, nhấn "Áp Dụng" để áp dụng cài đặt
-
-2. TÙY CHỈNH THỦ CÔNG:
-   Bạn có thể tùy chỉnh:
-   - Cỡ chữ, phông chữ, độ đậm
-   - Màu chữ, màu nền, màu văn bản gốc
-   - Độ trong suốt
-   - Kích thước màn hình dịch
-   - Căn lề, khoảng cách dòng
-   - Viền, padding
-   - Hiển thị văn bản gốc
-   - Lưu lịch sử dịch
-
+BƯỚC 3: Tùy chỉnh giao diện (Tab "Giao Diện Dịch")
+   1. CẤU HÌNH NHANH (PRESET):
+      - "Tối Ưu Tốc Độ": Game có hội thoại nhanh
+      - "Cân Bằng": Hầu hết game/ứng dụng (khuyến nghị)
+      - "Tối Ưu Chất Lượng": Cần đọc kỹ
+      - "Mặc Định": Cài đặt mặc định
+      - ⚠️ Nhấn "Áp Dụng" sau khi chọn preset
+   
+   2. TÙY CHỈNH THỦ CÔNG: Font, màu sắc, kích thước, độ trong suốt, căn lề, v.v.
+   
    3. NÚT ĐIỀU KHIỂN:
-   - "Áp Dụng": Áp dụng tất cả cài đặt đã thay đổi
-   - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp màn hình, engine OCR, dịch vụ dịch và DeepL key)
+      - "Áp Dụng": Áp dụng cài đặt
+      - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp, engine OCR, dịch vụ, DeepL key)
 
 BƯỚC 4: Bắt đầu dịch (Tab "Điều Khiển")
-─────────────────────────────────────────
-1. Nhấn nút "Bắt Đầu Dịch"
-2. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
-3. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
-4. Công cụ sẽ tự động xử lý nhiều hộp thoại liên tiếp
+   1. Nhấn "Bắt Đầu Dịch"
+   2. Màn hình dịch xuất hiện, văn bản được dịch tự động
+   3. Công cụ tự động xử lý nhiều hộp thoại liên tiếp
 
 BƯỚC 5: Sử dụng màn hình dịch
-──────────────────────────────
-• DI CHUYỂN: Kéo thả màn hình dịch đến vị trí mong muốn
-• THAY ĐỔI KÍCH THƯỚC: Kéo các cạnh hoặc góc để thay đổi kích thước
-• CUỘN VĂN BẢN: Cuộn lên/xuống trong màn hình dịch nếu văn bản quá dài
-• KHÓA: Tích vào "Khóa màn hình dịch" trong tab "Điều Khiển" để ngăn di chuyển nhầm
-• TỰ ĐỘNG LƯU: Vị trí và kích thước được tự động lưu lại
+   • DI CHUYỂN: Kéo thả màn hình dịch
+   • THAY ĐỔI KÍCH THƯỚC: Kéo cạnh/góc
+   • CUỘN: Cuộn lên/xuống nếu văn bản dài
+   • KHÓA: Tích "Khóa màn hình dịch" trong tab "Điều Khiển" để tránh di chuyển nhầm
+   • TỰ ĐỘNG LƯU: Vị trí và kích thước được lưu tự động
 
-═══════════════════════════════════════════════════════════════════════════════
 3. MẸO SỬ DỤNG
-═══════════════════════════════════════════════════════════════════════════════
 
-• SỬ DỤNG PRESET:
-  - Game có hội thoại nhanh: Chọn "Tối Ưu Tốc Độ"
-  - Game/ứng dụng thường: Chọn "Cân Bằng"
-  - Cần đọc kỹ: Chọn "Tối Ưu Chất Lượng"
+   • PRESET: "Tối Ưu Tốc Độ" cho game nhanh, "Cân Bằng" cho hầu hết trường hợp, "Tối Ưu Chất Lượng" khi cần đọc kỹ
+   
+   • CHỌN VÙNG: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
+   
+   • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung. Nếu có NVIDIA GPU → chọn "GPU" mode
+   
+   • DỊCH VỤ: Google Translate (miễn phí) hoặc DeepL (chất lượng tốt hơn, có phí). DeepL: Context Window = 2 (khuyến nghị)
+   
+   • TỐI ƯU: Tắt hiển thị văn bản gốc, dùng font đơn giản (Arial, Helvetica), giảm độ trong suốt nếu cần
+   
+   • KHI CHƠI GAME: Khóa màn hình dịch, dùng preset "Tối Ưu Tốc Độ", đặt màn hình dịch không che gameplay
 
-• CHỌN VÙNG CHỤP:
-  - Chọn càng chính xác càng tốt - chỉ vùng hộp thoại
-  - Tránh chọn vùng quá lớn - sẽ dịch chậm hơn
-
-• CHỌN ENGINE OCR:
-  - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
-  - EasyOCR thường chính xác hơn cho game và các văn bản tiếng Nhật, Hàn, Trung
-  - Nếu chọn EasyOCR và máy có card đồ họa NVIDIA, chọn "GPU" trong "EasyOCR Mode" để chạy mượt hơn
-
-• CHỌN DỊCH VỤ DỊCH THUẬT:
-  - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
-  - DeepL: Chất lượng tốt hơn, đặc biệt cho tiếng Nhật, Hàn (cần trả phí)
-
-• TỐI ƯU GIAO DIỆN:
-  - Tắt hiển thị văn bản gốc để giảm tải
-  - Giảm độ trong suốt nếu cần đọc rõ hơn
-  - Sử dụng phông chữ đơn giản (Arial, Helvetica) để hiển thị nhanh hơn
-
-• KHI CHƠI GAME:
-  - Khóa màn hình dịch để tránh di chuyển nhầm
-  - Sử dụng preset "Tối Ưu Tốc Độ" cho game có hội thoại nhanh
-  - Đặt màn hình dịch ở vị trí không che khuất gameplay
-
-═══════════════════════════════════════════════════════════════════════════════
 4. XỬ LÝ SỰ CỐ
-═══════════════════════════════════════════════════════════════════════════════
 
-• OCR KHÔNG HOẠT ĐỘNG:
-  - Kiểm tra Tesseract đã cài đặt đúng chưa
-  - Sử dụng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn Tesseract
-  - Thử chuyển sang EasyOCR nếu có
-  - Kiểm tra ngôn ngữ nguồn đã chọn đúng chưa
+   • OCR KHÔNG HOẠT ĐỘNG:
+     - Kiểm tra Tesseract đã cài đúng → Dùng nút "Duyệt" để chọn đường dẫn
+     - Thử chuyển sang EasyOCR
+     - Kiểm tra ngôn ngữ nguồn đã chọn đúng
+   
+   • DỊCH KHÔNG HOẠT ĐỘNG:
+     - Kiểm tra kết nối internet
+     - Nếu dùng DeepL: Kiểm tra API key
+     - Thử chuyển sang Google Translate
+   
+   • DỊCH SAI:
+     - Thử thay đổi ngôn ngữ nguồn
+     - Thử chuyển engine OCR (Tesseract ↔ EasyOCR)
+     - Đảm bảo văn bản rõ ràng, không mờ
+   
+   • CHẬM HOẶC LAG:
+     - EasyOCR: Chọn "GPU" mode nếu có NVIDIA GPU
+     - Tăng khoảng thời gian cập nhật (200-300ms)
+     - Dùng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
+     - Chọn vùng chụp nhỏ hơn, tắt hiển thị văn bản gốc
+     - Thử chuyển sang Tesseract
+   
+   • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
+     - Kiểm tra không bị di chuyển ra ngoài màn hình
+     - Dừng và khởi động lại dịch
+     - Nhấn "Đặt Lại Tất Cả" để reset vị trí
+     - Đảm bảo tỷ lệ hiển thị Windows là 100%
+   
+   • XEM CHI TIẾT: Tab "Trạng Thái" hoặc file error_log.txt
 
-• DỊCH KHÔNG HOẠT ĐỘNG:
-  - Kiểm tra kết nối internet (cần cho Google Translate và DeepL)
-  - Nếu dùng DeepL: Kiểm tra API key đã nhập đúng chưa
-  - Thử chuyển sang Google Translate nếu DeepL có vấn đề
+5. LƯU Ý QUAN TRỌNG
 
-• DỊCH SAI:
-  - Thử thay đổi ngôn ngữ nguồn
-  - Thử chuyển engine OCR (Tesseract ↔ EasyOCR)
-  - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
+   • Cần kết nối internet để dịch
+   • Chất lượng dịch phụ thuộc: Độ rõ văn bản, tương phản nền, font, độ chính xác OCR
+   • Tất cả cài đặt được tự động lưu
+   • Nút "Đặt Lại Tất Cả" KHÔNG reset: Vùng chụp, Engine OCR, Dịch vụ, DeepL key
 
-• CHẬM HOẶC LAG:
-  - Nếu dùng EasyOCR: Chọn "GPU" trong "EasyOCR Mode" nếu máy có card đồ họa NVIDIA
-  - Tăng khoảng thời gian cập nhật (200-300ms)
-  - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
-  - Chọn vùng chụp nhỏ hơn
-  - Tắt hiển thị văn bản gốc
-  - Đóng các ứng dụng khác đang chạy
-  - Thử chuyển sang Tesseract nếu EasyOCR quá chậm
+6. NGÔN NGỮ ĐƯỢC HỖ TRỢ
 
-• MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
-  - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
-  - Thử dừng và khởi động lại dịch
-  - Nhấn "Đặt Lại Tất Cả" trong tab "Giao Diện Dịch" để reset vị trí
-  - Đảm bảo tỷ lệ hiển thị màn hình Windows là 100%
+   NGÔN NGỮ NGUỒN (OCR): Anh, Nhật, Hàn, Trung (Giản thể/Phồn thể), Pháp, Đức, Tây Ban Nha
+   
+   NGÔN NGỮ ĐÍCH: Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
 
-• XEM CHI TIẾT:
-  - Xem tab "Trạng Thái" để biết thông tin chi tiết về lỗi
-  - Kiểm tra file error_log.txt trong thư mục chương trình (nếu có)
+7. CÁC TAB TRONG CÔNG CỤ
 
-═══════════════════════════════════════════════════════════════════════════════
-5. CÁC TÍNH NĂNG
-═══════════════════════════════════════════════════════════════════════════════
+   TAB 1: CÀI ĐẶT - Chọn vùng, ngôn ngữ, engine OCR, dịch vụ, cấu hình OCR
+   
+   TAB 2: GIAO DIỆN DỊCH - Preset nhanh, tùy chỉnh font/màu/kích thước
+   
+   TAB 3: ĐIỀU KHIỂN - Bắt đầu/Dừng dịch, khóa màn hình dịch
+   
+   TAB 4: TRẠNG THÁI - Nhật ký hoạt động, lỗi, cảnh báo
+   
+   TAB 5: HƯỚNG DẪN - Hướng dẫn sử dụng đầy đủ (tab này)
 
-• Hỗ trợ 2 engine OCR: Tesseract và EasyOCR
-• Hỗ trợ 2 dịch vụ dịch thuật: Google Translate và DeepL
-• Tự động phát hiện và xử lý nhiều hộp thoại liên tiếp
-• Tự động lưu và khôi phục cài đặt
-• Giao diện tùy chỉnh hoàn toàn với preset nhanh
-• Hỗ trợ nhiều ngôn ngữ OCR và dịch thuật
-• Khóa màn hình dịch để tránh di chuyển nhầm khi chơi game
-• Tùy chọn Multi-scale cho cả Tesseract và EasyOCR để tăng độ chính xác
-• Tùy chọn Text Region Detection cho Tesseract để xử lý ảnh phức tạp
-• GPU acceleration cho EasyOCR (tự động phát hiện NVIDIA GPU)
-• Tự động giảm dịch trùng với cơ chế kiểm tra độ ổn định text
-
-═══════════════════════════════════════════════════════════════════════════════
-6. LƯU Ý QUAN TRỌNG
-═══════════════════════════════════════════════════════════════════════════════
-
-• Cần kết nối internet để dịch (Google Translate và DeepL)
-• Chất lượng dịch phụ thuộc vào:
-  - Độ rõ và kích thước văn bản
-  - Độ tương phản nền
-  - Kiểu phông chữ
-  - Độ chính xác của OCR
-• Tất cả cài đặt được tự động lưu lại
-• Công cụ sẽ tự động điều chỉnh tốc độ để hoạt động mượt mà
-• Nút "Đặt Lại Tất Cả" sẽ KHÔNG reset:
-  - Vùng chụp màn hình (giữ nguyên vùng đã chọn)
-  - Engine OCR (giữ nguyên Tesseract hoặc EasyOCR)
-  - Dịch vụ dịch thuật (giữ nguyên Google hoặc DeepL)
-  - DeepL API Key (giữ nguyên key đã nhập)
-
-═══════════════════════════════════════════════════════════════════════════════
-7. NGÔN NGỮ ĐƯỢC HỖ TRỢ
-═══════════════════════════════════════════════════════════════════════════════
-
-NGÔN NGỮ NGUỒN (OCR):
-• Tiếng Anh
-• Tiếng Nhật
-• Tiếng Hàn
-• Tiếng Trung (Giản thể và Phồn thể)
-• Tiếng Pháp
-• Tiếng Đức
-• Tiếng Tây Ban Nha
-
-NGÔN NGỮ ĐÍCH (DỊCH THUẬT):
-• Tiếng Việt
-• Tiếng Anh
-• Tiếng Nhật
-• Tiếng Hàn
-• Tiếng Trung
-• Tiếng Pháp
-• Tiếng Đức
-• Tiếng Tây Ban Nha
-
-═══════════════════════════════════════════════════════════════════════════════
-8. CÁC TAB TRONG CÔNG CỤ
-═══════════════════════════════════════════════════════════════════════════════
-
-TAB 1: CÀI ĐẶT
-• Chọn vùng chụp màn hình
-• Ngôn ngữ nguồn (OCR)
-• Khoảng thời gian cập nhật
-• Engine OCR (Tesseract/EasyOCR)
-• EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
-• EasyOCR Multi-scale - chỉ hiện khi chọn EasyOCR
-• Tesseract Options (Multi-scale, Text Region Detection) - chỉ hiện khi chọn Tesseract
-• Đường dẫn Tesseract (khi chọn Tesseract)
-• Ngôn ngữ đích
-• Dịch vụ dịch thuật (Google/DeepL)
-• DeepL API Key (khi chọn DeepL)
-
-TAB 2: GIAO DIỆN DỊCH
-• Cấu hình nhanh (Preset): Tối Ưu Tốc Độ, Cân Bằng, Tối Ưu Chất Lượng, Mặc Định
-• Tùy chỉnh thủ công: Font, màu sắc, kích thước, độ trong suốt, v.v.
-• Nút "Áp Dụng" và "Đặt Lại Tất Cả"
-
-TAB 3: ĐIỀU KHIỂN
-• Nút "Bắt Đầu Dịch"
-• Nút "Dừng Dịch"
-• Khóa màn hình dịch
-
-TAB 4: TRẠNG THÁI
-• Hiển thị nhật ký hoạt động
-• Thông tin về lỗi, cảnh báo, và trạng thái
-
-TAB 5: HƯỚNG DẪN
-• Hướng dẫn sử dụng đầy đủ
-• Mẹo sử dụng
-• Xử lý sự cố
-
-═══════════════════════════════════════════════════════════════════════════════
 Chúc bạn sử dụng công cụ hiệu quả!
-═══════════════════════════════════════════════════════════════════════════════

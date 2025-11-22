@@ -17,6 +17,7 @@ a = Analysis(
         'PIL',
         'PIL.Image',
         'PIL.ImageTk',
+        'PIL.Image.Resampling',  # For Image.Resampling.LANCZOS, etc.
         'mss',
         'numpy',
         'pytesseract',
@@ -41,6 +42,14 @@ a = Analysis(
         'sys',  # For sys.frozen check in handlers
         'time',  # For time operations in handlers
         'tempfile',  # For temporary directory operations in handlers and translator
+        # Modules package
+        'modules',
+        'modules.logger',
+        'modules.circuit_breaker',
+        'modules.ocr_postprocessing',
+        'modules.unified_translation_cache',
+        'modules.batch_translation',
+        'modules.deepl_context',
         # Handlers package
         'handlers',
         'handlers.tesseract_ocr_handler',

@@ -4,39 +4,17 @@ Tesseract OCR Handler - tối ưu cho free engine
 import cv2
 import numpy as np
 import pytesseract
+import sys
+import os
 
-def get_base_dir():
-    """Lấy thư mục gốc - hỗ trợ cả script và exe"""
-    try:
-        import sys
-        import os
-        if getattr(sys, 'frozen', False):
-            # Chạy từ executable (PyInstaller)
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            # Chạy từ Python script
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.normpath(base_dir)
-    except Exception:
-        import os
-        return os.path.normpath(os.getcwd())
-
-def log_error(msg, exception=None):
-    """Simple error logging - fallback nếu không có logger"""
-    try:
-        import traceback
-        from datetime import datetime
-        import os
-        
-        base_dir = get_base_dir()
-        error_log_file = os.path.join(base_dir, "error_log.txt")
-        with open(error_log_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"\n[{timestamp}] {msg}\n")
-            if exception:
-                f.write(f"Exception: {str(exception)}\n")
-                f.write(f"Traceback:\n{traceback.format_exc()}\n")
-    except Exception:
+# Import centralized logger from modules
+try:
+    from modules import log_error, log_debug
+except ImportError:
+    # Fallback if modules not available
+    def log_error(msg, exception=None):
+        pass
+    def log_debug(msg):
         pass
 
 
@@ -136,25 +114,29 @@ class TesseractOCRHandler:
         """
         Scale ảnh với scale_factor tùy chỉnh (cho multi-scale processing)
         """
-        if img is None:
-            return img
-        if isinstance(img, np.ndarray):
-            if img.size == 0 or len(img.shape) < 2:
+        try:
+            if img is None:
                 return img
-        h, w = img.shape[:2]
-        
-        # Minimum dimension check
-        min_dim = 300
-        if h < min_dim or w < min_dim:
-            base_scale = max(min_dim / h, min_dim / w)
-            final_scale = base_scale * scale_factor
-        else:
-            final_scale = scale_factor
-        
-        if abs(final_scale - 1.0) > 0.01:  # Only resize if scale is significantly different
-            scaled = cv2.resize(img, None, fx=final_scale, fy=final_scale, interpolation=cv2.INTER_CUBIC)
-            return scaled
-        return img
+            if isinstance(img, np.ndarray):
+                if img.size == 0 or len(img.shape) < 2:
+                    return img
+            h, w = img.shape[:2]
+            
+            # Minimum dimension check
+            min_dim = 300
+            if h < min_dim or w < min_dim:
+                base_scale = max(min_dim / h, min_dim / w)
+                final_scale = base_scale * scale_factor
+            else:
+                final_scale = scale_factor
+            
+            if abs(final_scale - 1.0) > 0.01:  # Only resize if scale is significantly different
+                scaled = cv2.resize(img, None, fx=final_scale, fy=final_scale, interpolation=cv2.INTER_CUBIC)
+                return scaled
+            return img
+        except Exception as e:
+            log_error(f"Error scaling image for OCR (scale_factor={scale_factor})", e)
+            return img
     
     def detect_text_regions(self, img, min_area=100):
         """
@@ -240,16 +222,21 @@ class TesseractOCRHandler:
         """
         OCR region với confidence filtering và multi-scale support
         """
-        x, y, w, h = region
-        if len(img.shape) == 3:
-            roi = img[y:y+h, x:x+w]
-        else:
-            roi = img[y:y+h, x:x+w]
-        
-        # Scale for OCR với scale_factor
-        scaled_roi = self.scale_for_ocr(roi, scale_factor)
-        
         try:
+            x, y, w, h = region
+            if len(img.shape) == 3:
+                roi = img[y:y+h, x:x+w]
+            else:
+                roi = img[y:y+h, x:x+w]
+            
+            # Validate ROI
+            if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
+                log_debug(f"Empty ROI for region {region}")
+                return "", 0.0, 0
+            
+            # Scale for OCR với scale_factor
+            scaled_roi = self.scale_for_ocr(roi, scale_factor)
+            
             # Dùng cached config
             config = self.cached_tess_params if self.cached_tess_params else self.get_tesseract_config('gaming')
             
@@ -288,44 +275,52 @@ class TesseractOCRHandler:
         - Multi-scale processing
         - Adaptive confidence thresholds
         """
-        # Preprocess
-        processed_cv_img = self.preprocess_for_ocr(img_cv_bgr, prep_mode, block_size, c_value)
-        
-        # Cache config
-        if self.cached_prep_mode != prep_mode:
-            self.cached_prep_mode = prep_mode
-            # Map prep_mode to tesseract mode
-            if prep_mode in ['gaming', 'document', 'subtitle']:
-                tess_mode = prep_mode
-            else:
-                tess_mode = 'general'
-            self.cached_tess_params = self.get_tesseract_config(tess_mode)
-        
-        # Full image OCR (text region detection tắt mặc định để tránh chậm)
-        full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
-        
-        # Multi-scale chỉ khi được bật (tắt mặc định)
-        if self.enable_multi_scale:
-            best_result = None
-            best_score = 0.0
+        try:
+            # Preprocess
+            processed_cv_img = self.preprocess_for_ocr(img_cv_bgr, prep_mode, block_size, c_value)
             
-            # Thử ít scales hơn để nhanh hơn: chỉ 1.0x và 1.2x
-            for scale in [1.0, 1.2]:
-                text, avg_conf, word_count = self.ocr_region_with_confidence(
-                    processed_cv_img, full_img_region, confidence_threshold, scale_factor=scale
-                )
+            # Cache config
+            if self.cached_prep_mode != prep_mode:
+                self.cached_prep_mode = prep_mode
+                # Map prep_mode to tesseract mode
+                if prep_mode in ['gaming', 'document', 'subtitle']:
+                    tess_mode = prep_mode
+                else:
+                    tess_mode = 'general'
+                self.cached_tess_params = self.get_tesseract_config(tess_mode)
+            
+            # Full image OCR (text region detection tắt mặc định để tránh chậm)
+            full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
+            
+            # Multi-scale chỉ khi được bật (tắt mặc định)
+            if self.enable_multi_scale:
+                best_result = None
+                best_score = 0.0
                 
-                if text:
-                    score = avg_conf * word_count
-                    if score > best_score:
-                        best_score = score
-                        best_result = text
-            
-            return best_result if best_result else ""
-        else:
-            # Single scale - nhanh nhất
-            text, _, _ = self.ocr_region_with_confidence(
-                processed_cv_img, full_img_region, confidence_threshold, scale_factor=1.0
-            )
-            return text
+                # Thử ít scales hơn để nhanh hơn: chỉ 1.0x và 1.2x
+                for scale in [1.0, 1.2]:
+                    try:
+                        text, avg_conf, word_count = self.ocr_region_with_confidence(
+                            processed_cv_img, full_img_region, confidence_threshold, scale_factor=scale
+                        )
+                        
+                        if text:
+                            score = avg_conf * word_count
+                            if score > best_score:
+                                best_score = score
+                                best_result = text
+                    except Exception as e:
+                        log_error(f"Error in multi-scale OCR (scale={scale})", e)
+                        continue
+                
+                return best_result if best_result else ""
+            else:
+                # Single scale - nhanh nhất
+                text, _, _ = self.ocr_region_with_confidence(
+                    processed_cv_img, full_img_region, confidence_threshold, scale_factor=1.0
+                )
+                return text
+        except Exception as e:
+            log_error(f"Error in Tesseract OCR recognize (prep_mode={prep_mode})", e)
+            return ""
 

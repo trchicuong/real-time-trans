@@ -4,80 +4,18 @@ EasyOCR Handler - tối ưu CPU cho free engine
 import time
 import numpy as np
 from PIL import Image
+import sys
+import os
 
-def get_base_dir():
-    """Lấy thư mục gốc - hỗ trợ cả script và exe"""
-    try:
-        import sys
-        import os
-        if getattr(sys, 'frozen', False):
-            # Chạy từ executable (PyInstaller)
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            # Chạy từ Python script
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.normpath(base_dir)
-    except Exception:
-        import os
-        return os.path.normpath(os.getcwd())
-
-def log_error(msg, exception=None):
-    """Simple error logging - fallback nếu không có logger - robust error handling cho EXE"""
-    try:
-        import traceback
-        from datetime import datetime
-        import os
-        
-        base_dir = get_base_dir()
-        error_log_file = os.path.join(base_dir, "error_log.txt")
-        
-        # Đảm bảo thư mục tồn tại
-        try:
-            os.makedirs(base_dir, exist_ok=True)
-        except (OSError, PermissionError):
-            # Fallback về thư mục hiện tại
-            try:
-                base_dir = os.getcwd()
-                error_log_file = os.path.join(base_dir, "error_log.txt")
-            except Exception:
-                # Ultimate fallback: thư mục temp
-                try:
-                    import tempfile
-                    base_dir = tempfile.gettempdir()
-                    error_log_file = os.path.join(base_dir, "real-time-trans_error_log.txt")
-                except Exception:
-                    pass  # Complete failure
-        
-        # Ghi log với error handling
-        try:
-            with open(error_log_file, 'a', encoding='utf-8', errors='replace') as f:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                f.write(f"\n[{timestamp}] {msg}\n")
-                if exception:
-                    f.write(f"Exception: {str(exception)}\n")
-                    try:
-                        f.write(f"Traceback:\n{traceback.format_exc()}\n")
-                    except Exception:
-                        f.write("Traceback: (unable to format)\n")
-                f.write("-" * 80 + "\n")
-                f.flush()  # Force write to disk
-        except (IOError, PermissionError, OSError) as file_err:
-            # Nếu không ghi được file, thử ghi vào stderr (nếu có console)
-            try:
-                import sys
-                sys.stderr.write(f"[ERROR LOG FAILED] {msg}\n")
-                if exception:
-                    sys.stderr.write(f"Exception: {str(exception)}\n")
-                sys.stderr.write(f"File write error: {file_err}\n")
-            except Exception:
-                pass  # Last resort: ignore
-    except Exception:
-        # Ultimate fallback: try stderr
-        try:
-            import sys
-            sys.stderr.write(f"[CRITICAL] Error logging failed: {msg}\n")
-        except Exception:
-            pass  # Complete failure
+# Import centralized logger from modules
+try:
+    from modules import log_error, log_debug
+except ImportError:
+    # Fallback if modules not available
+    def log_error(msg, exception=None):
+        pass
+    def log_debug(msg):
+        pass
 
 EASYOCR_AVAILABLE = False
 try:

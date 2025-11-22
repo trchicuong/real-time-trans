@@ -10,7 +10,7 @@ import subprocess
 import shutil
 
 # Version number
-VERSION = "v1.0.4"
+VERSION = "v1.0.5"
 
 def get_timestamp_code():
     """Get timestamp code in HHMMSS format"""

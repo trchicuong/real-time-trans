@@ -14,40 +14,22 @@ try:
 except ImportError:
     CHARDET_AVAILABLE = False
 
-def get_base_dir():
-    """Lấy thư mục gốc để lưu cache file
-    Hỗ trợ cả chạy từ Python script và frozen executable (PyInstaller)
-    """
-    try:
-        if getattr(sys, 'frozen', False):
-            # Chạy từ executable (PyInstaller)
-            # sys.executable trỏ đến file .exe
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            # Chạy từ Python script
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        # Đảm bảo đường dẫn được chuẩn hóa
-        return os.path.normpath(base_dir)
-    except Exception:
-        # Fallback: sử dụng thư mục hiện tại
-        return os.path.normpath(os.getcwd())
-
-def log_error(msg, exception=None):
-    """Simple error logging - fallback nếu không có logger"""
-    try:
-        import traceback
-        from datetime import datetime
-        
-        base_dir = get_base_dir()
-        error_log_file = os.path.join(base_dir, "error_log.txt")
-        with open(error_log_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"\n[{timestamp}] {msg}\n")
-            if exception:
-                f.write(f"Exception: {str(exception)}\n")
-                f.write(f"Traceback:\n{traceback.format_exc()}\n")
-    except Exception:
+# Import from modules
+try:
+    from modules import get_base_dir, log_error
+except ImportError:
+    # Fallback if modules not available
+    def get_base_dir():
+        try:
+            if getattr(sys, 'frozen', False):
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            return os.path.normpath(base_dir)
+        except Exception:
+            return os.path.normpath(os.getcwd())
+    
+    def log_error(msg, exception=None):
         pass
 
 def detect_file_encoding(file_path):
@@ -67,8 +49,8 @@ def detect_file_encoding(file_path):
                     # Chỉ trust nếu confidence > 0.7
                     if confidence > 0.7 and detected_encoding:
                         return detected_encoding
-        except Exception:
-            pass
+        except Exception as e:
+            log_error(f"Error detecting file encoding with chardet for {file_path}", e)
     
     # Fallback encodings (test từng encoding)
     encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
@@ -96,8 +78,8 @@ def safe_read_file_lines(file_path, encodings=None):
         detected = detect_file_encoding(file_path)
         if detected and detected not in encodings:
             encodings.insert(0, detected)
-    except Exception:
-        pass
+    except Exception as e:
+        log_error(f"Error detecting encoding for {file_path}", e)
     
     for encoding in encodings:
         try:

@@ -74,6 +74,23 @@ try:
 except ImportError:
     pass
 
+# Import modules from modules package
+from modules import (
+    log_error,
+    log_debug,
+    get_base_dir,
+    NetworkCircuitBreaker,
+    post_process_ocr_text_general,
+    remove_text_after_last_punctuation_mark,
+    post_process_ocr_for_game_subtitle,
+    UnifiedTranslationCache,
+    split_into_sentences,
+    translate_batch_google,
+    translate_batch_deepl,
+    should_use_batch_translation,
+    DeepLContextManager
+)
+
 # Handlers cho free OCR engines
 try:
     from handlers import TesseractOCRHandler, EasyOCRHandler, TranslationCacheManager
@@ -83,80 +100,6 @@ except ImportError:
     TesseractOCRHandler = None
     EasyOCRHandler = None
     TranslationCacheManager = None
-
-def get_base_dir():
-    """Lấy thư mục gốc để lưu config.json và error_log.txt
-    Hỗ trợ cả chạy từ Python script và frozen executable (PyInstaller)
-    """
-    try:
-        if getattr(sys, 'frozen', False):
-            # Chạy từ executable (PyInstaller)
-            # sys.executable trỏ đến file .exe
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            # Chạy từ Python script
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Đảm bảo đường dẫn được chuẩn hóa
-        return os.path.normpath(base_dir)
-    except Exception:
-        # Fallback: sử dụng thư mục hiện tại
-        return os.path.normpath(os.getcwd())
-
-def log_error(error_msg, exception=None):
-    """Ghi lỗi ra file error_log.txt để debug - robust error handling cho EXE"""
-    try:
-        base_dir = get_base_dir()
-        error_log_file = os.path.join(base_dir, "error_log.txt")
-        
-        # Đảm bảo thư mục tồn tại
-        try:
-            os.makedirs(base_dir, exist_ok=True)
-        except (OSError, PermissionError) as dir_err:
-            # Nếu không tạo được thư mục, fallback về thư mục hiện tại
-            try:
-                base_dir = os.getcwd()
-                error_log_file = os.path.join(base_dir, "error_log.txt")
-            except Exception:
-                # Ultimate fallback: thư mục temp
-                try:
-                    import tempfile
-                    base_dir = tempfile.gettempdir()
-                    error_log_file = os.path.join(base_dir, "real-time-trans_error_log.txt")
-                except Exception:
-                    pass  # Complete failure
-        
-        # Ghi log với error handling
-        try:
-            with open(error_log_file, 'a', encoding='utf-8', errors='replace') as f:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                f.write(f"\n[{timestamp}] {error_msg}\n")
-                if exception:
-                    f.write(f"Exception: {str(exception)}\n")
-                    try:
-                        f.write(f"Traceback:\n{traceback.format_exc()}\n")
-                    except Exception:
-                        f.write("Traceback: (unable to format)\n")
-                f.write("-" * 80 + "\n")
-                f.flush()  # Force write to disk
-        except (IOError, PermissionError, OSError) as file_err:
-            # Nếu không ghi được file, thử ghi vào stderr (nếu có console)
-            try:
-                import sys
-                sys.stderr.write(f"[ERROR LOG FAILED] {error_msg}\n")
-                if exception:
-                    sys.stderr.write(f"Exception: {str(exception)}\n")
-                sys.stderr.write(f"File write error: {file_err}\n")
-            except Exception:
-                pass  # Last resort: ignore
-    except Exception as critical_err:
-        # Ultimate fallback: try stderr
-        try:
-            import sys
-            sys.stderr.write(f"[CRITICAL] Error logging failed: {error_msg}\n")
-            sys.stderr.write(f"Critical error: {critical_err}\n")
-        except Exception:
-            pass  # Complete failure, ignore
 
 def get_actual_screen_size():
     """
@@ -342,6 +285,14 @@ class ScreenTranslator:
         self.deepl_api_client = None
         self.use_deepl = False  # Flag to use DeepL instead of Google
         self.deepl_api_key = ""  # DeepL API key
+        self.deepl_context_window_size = 2  # Default: 2 previous subtitles (0-3)
+        
+        # DeepL Context Manager (will be updated after load_config if config exists)
+        self.deepl_context_manager = DeepLContextManager(max_context_size=self.deepl_context_window_size)
+        
+        # Circuit breaker for API calls (network degradation detection)
+        self.google_translation_circuit_breaker = NetworkCircuitBreaker()
+        self.deepl_translation_circuit_breaker = NetworkCircuitBreaker()
         
         self.overlay_drag_start_x = 0
         self.overlay_drag_start_y = 0
@@ -371,7 +322,10 @@ class ScreenTranslator:
         self.history_size = 5  # Tăng để track context tốt hơn
         self.performance_mode = "balanced"
         
-        # Translation Cache Manager (nếu có handlers)
+        # Unified Translation Cache (primary cache)
+        self.unified_cache = UnifiedTranslationCache(max_size=2000)
+        
+        # Translation Cache Manager (nếu có handlers) - giữ để backward compatibility
         if HANDLERS_AVAILABLE and TranslationCacheManager:
             self.cache_manager = TranslationCacheManager(max_size=2000)
             self.translation_cache = {}  # Giữ để backward compatibility
@@ -456,6 +410,10 @@ class ScreenTranslator:
                 self.translation_service_var.set("deepl")
             else:
                 self.translation_service_var.set("google")
+        
+        # Sync DeepL context window size với giá trị đã load
+        if hasattr(self, 'deepl_context_window_var'):
+            self.deepl_context_window_var.set(self.deepl_context_window_size)
         
         # Khởi tạo OCR engine nếu cần
         if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
@@ -1090,6 +1048,26 @@ class ScreenTranslator:
             deepl_key_entry.grid(row=next_row, column=1, pady=5, sticky=tk.W+tk.E)
             deepl_key_entry.bind("<FocusOut>", self.on_deepl_key_change)
             next_row += 1
+            
+            # DeepL Context Window Size
+            ttk.Label(translation_frame, text="Context Window:").grid(row=next_row, column=0, sticky=tk.W, pady=5)
+            self.deepl_context_window_var = tk.IntVar(value=self.deepl_context_window_size)
+            context_window_combo = ttk.Combobox(
+                translation_frame,
+                textvariable=self.deepl_context_window_var,
+                values=[0, 1, 2, 3],
+                state="readonly",
+                width=15
+            )
+            context_window_combo.grid(row=next_row, column=1, pady=5, sticky=tk.W)
+            context_window_combo.bind("<<ComboboxSelected>>", self.on_deepl_context_window_change)
+            ttk.Label(
+                translation_frame, 
+                text="(Số subtitle trước đó dùng làm context, 0 = tắt)",
+                font=("Arial", 8),
+                foreground="gray"
+            ).grid(row=next_row, column=1, sticky=tk.E, padx=(5, 0))
+            next_row += 1
         
         translation_frame.columnconfigure(1, weight=1)
     
@@ -1452,258 +1430,166 @@ class ScreenTranslator:
         # Instructions content - Hướng dẫn cho người dùng phổ thông (EXE)
         # Lưu ý: Nội dung này dành cho người dùng cuối, không chứa thông tin kỹ thuật/dev
         instructions_text = """
-HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC (BẢN CUDA)
+HƯỚNG DẪN SỬ DỤNG CÔNG CỤ DỊCH MÀN HÌNH THỜI GIAN THỰC
 
 1. CÀI ĐẶT
 
 BƯỚC 1: Cài đặt Tesseract OCR (BẮT BUỘC)
-   • Windows:
-     - Tải Tesseract OCR từ: https://github.com/UB-Mannheim/tesseract/wiki
-     - Chạy file cài đặt và làm theo hướng dẫn
-     - Ghi nhớ thư mục cài đặt (thường là C:\\Program Files\\Tesseract-OCR)
-     - Khi chạy công cụ lần đầu, nếu công cụ không tự động tìm thấy Tesseract,
-       bạn sẽ cần dùng nút "Duyệt" để chọn đường dẫn Tesseract
-   
-   • macOS: Mở Terminal và chạy: brew install tesseract
-   
-   • Linux: 
-     - Ubuntu/Debian: sudo apt-get install tesseract-ocr
-     - Fedora: sudo dnf install tesseract
+   • Windows: Tải từ https://github.com/UB-Mannheim/tesseract/wiki
+   • macOS: brew install tesseract
+   • Linux: sudo apt-get install tesseract-ocr (Ubuntu/Debian) hoặc sudo dnf install tesseract (Fedora)
+   • Nếu không tự tìm thấy → Dùng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn
 
-BƯỚC 2: Cài đặt dữ liệu ngôn ngữ (Nếu cần)
-   • Nếu ứng dụng của bạn dùng tiếng Nhật, Hàn, Trung, v.v., bạn cần tải thêm:
-   • Windows: 
-     - Tải từ: https://github.com/tesseract-ocr/tessdata
-     - Đặt các file .traineddata vào thư mục tessdata của Tesseract
-     - Thư mục tessdata thường ở: C:\\Program Files\\Tesseract-OCR\\tessdata\\
-   
-   • macOS/Linux:
-     - Ubuntu/Debian: sudo apt-get install tesseract-ocr-jpn  (ví dụ tiếng Nhật)
-     - macOS: brew install tesseract-lang  (bao gồm nhiều ngôn ngữ)
+BƯỚC 2: Dữ liệu ngôn ngữ (Nếu cần)
+   • Với ngôn ngữ không phải tiếng Anh (Nhật, Hàn, Trung...):
+   • Windows: Tải từ https://github.com/tesseract-ocr/tessdata, đặt vào C:\\Program Files\\Tesseract-OCR\\tessdata\\
+   • macOS/Linux: sudo apt-get install tesseract-ocr-jpn (ví dụ tiếng Nhật) hoặc brew install tesseract-lang
 
 BƯỚC 3: Chạy công cụ
-   • Chạy trực tiếp file RealTimeScreenTranslator.exe
-   • Nếu có cảnh báo của Windows, chấp nhận quyền truy cập "Run anyway"
-   • Đợi một lúc để công cụ cài đặt những Engine cần thiết ở nền, sau đó cửa sổ công cụ sẽ hiện ra (khoảng 5 -10s)
+   • Chạy file RealTimeScreenTranslator.exe
+   • Nếu có cảnh báo Windows → "Run anyway"
+   • Đợi 5-10s để công cụ khởi động
 
 2. BẮT ĐẦU SỬ DỤNG
 
 BƯỚC 1: Chọn vùng chụp màn hình
-   1. Mở ứng dụng của bạn (game, ứng dụng, v.v.) mà bạn muốn dịch
-   2. Trong cửa sổ công cụ dịch, chọn tab "Cài Đặt"
-   3. Nhấn nút "Chọn Vùng"
-   4. Cửa sổ sẽ thu nhỏ, màn hình sẽ tối đi
-   5. Dùng chuột kéo để chọn vùng hộp thoại trong ứng dụng
-   6. Thả chuột để xác nhận
+   1. Mở ứng dụng/game cần dịch
+   2. Tab "Cài Đặt" → Nhấn "Chọn Vùng"
+   3. Kéo chuột chọn vùng hộp thoại → Thả chuột để xác nhận
    
-   ⚠️ LƯU Ý QUAN TRỌNG:
-      - Chọn càng chính xác càng tốt - chỉ chọn vùng hiển thị hộp thoại!
-      - Chọn vùng nhỏ hơn = dịch nhanh hơn
-      - Tránh chọn vùng quá lớn hoặc bao gồm nhiều phần không cần thiết
+   ⚠️ LƯU Ý: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
 
 BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
-   1. NGÔN NGỮ NGUỒN:
-      - Chọn ngôn ngữ của văn bản trong ứng dụng
-      - Ví dụ: Tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   1. NGÔN NGỮ NGUỒN: Chọn ngôn ngữ của văn bản trong ứng dụng
    
    2. KHOẢNG THỜI GIAN CẬP NHẬT:
-      - Giá trị nhỏ (50-200ms): Dịch nhanh hơn nhưng tốn CPU hơn
-      - Giá trị lớn (300-500ms): Tiết kiệm CPU nhưng dịch chậm hơn
-      - Khuyến nghị: 100-200ms cho game, 200-300ms cho ứng dụng thường
-      - Lưu ý: Preset sẽ tự động cập nhật giá trị này
+      - 100-200ms: Game (nhanh, tốn CPU)
+      - 200-300ms: Ứng dụng thường (cân bằng)
+      - Preset sẽ tự động cập nhật giá trị này
    
    3. ENGINE OCR:
-      - Tesseract: Engine OCR mặc định (cần cài đặt Tesseract OCR)
-      - EasyOCR: Engine OCR thay thế, chính xác hơn cho một số ngôn ngữ và game nhưng tốn CPU/GPU hơn
-      - Nếu chọn Tesseract nhưng không tự động tìm thấy, dùng nút "Duyệt" để chọn
+      - Tesseract: Mặc định, CPU thấp (dùng cho nhu cầu phổ thông)
+      - EasyOCR: Chính xác hơn, tốn CPU/GPU hơn (khuyến nghị cho game)
+      - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
    
-   4. EASYOCR MODE (chỉ hiện khi chọn EasyOCR):
-      - Tự động: Công cụ tự động chọn CPU hoặc GPU phù hợp (khuyến nghị)
-      - CPU: Sử dụng CPU để xử lý (tiết kiệm GPU cho ứng dụng khác)
-      - GPU: Sử dụng GPU để xử lý (nhanh hơn, giảm tải CPU)
-      - Lưu ý: Nếu máy có card đồ họa NVIDIA, chọn "GPU" sẽ giúp công cụ chạy mượt hơn
+   4. EASYOCR MODE (chỉ khi chọn EasyOCR):
+      - Tự động: Tự chọn CPU/GPU (khuyến nghị)
+      - CPU: Tiết kiệm GPU
+      - GPU: Nhanh hơn, giảm tải CPU (cần NVIDIA GPU)
    
-   4a. EASYOCR MULTI-SCALE (chỉ hiện khi chọn EasyOCR):
-      - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
-      - Chỉ nên bật khi cần độ chính xác cao với text khó đọc
-      - Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 2-3 lần
+   4a. EASYOCR MULTI-SCALE (chỉ khi chọn EasyOCR):
+      - Tăng độ chính xác nhưng chậm hơn 2-3 lần
    
-   4b. TESSERACT OPTIONS (chỉ hiện khi chọn Tesseract):
-      - Bật Multi-scale: Tăng độ chính xác OCR bằng cách thử nhiều kích thước ảnh
-        • Chỉ nên bật khi cần độ chính xác cao
-        • Lưu ý: Bật Multi-scale sẽ làm chậm hơn khoảng 1.5-2 lần
-      - Bật Text Region Detection: Phát hiện vùng có text trước khi OCR
-        • Hữu ích với ảnh phức tạp có nhiều vùng không phải text
-        • Lưu ý: Chậm hơn do phải phát hiện vùng trước
+   4b. TESSERACT OPTIONS (chỉ khi chọn Tesseract):
+      - Multi-scale: Tăng độ chính xác, chậm hơn 1.5-2 lần
+      - Text Region Detection: Phát hiện vùng text trước, hữu ích với ảnh phức tạp
    
-   5. NGÔN NGỮ ĐÍCH:
-      - Chọn ngôn ngữ muốn dịch sang
-      - Ví dụ: Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   5. NGÔN NGỮ ĐÍCH: Chọn ngôn ngữ muốn dịch sang
    
    6. DỊCH VỤ DỊCH THUẬT:
-      - Google Translate: Miễn phí, không cần API key
-      - DeepL: Chất lượng dịch tốt hơn, cần API key (có phí)
-        - Nếu chọn DeepL, nhập API Key vào ô tương ứng
-        - Lấy API key tại: https://www.deepl.com/pro-api
-
-BƯỚC 3: Tùy chỉnh giao diện dịch (Tab "Giao Diện Dịch")
-   1. CẤU HÌNH NHANH (PRESET) - Khuyến nghị sử dụng:
-      - "Tối Ưu Tốc Độ": Phù hợp game có hội thoại xuất hiện nhanh
-      - "Cân Bằng": Phù hợp hầu hết game và ứng dụng
-      - "Tối Ưu Chất Lượng": Phù hợp khi cần đọc kỹ, chất lượng cao
-      - "Mặc Định": Cài đặt mặc định
-      - ⚠️ Sau khi chọn preset, nhấn "Áp Dụng" để áp dụng cài đặt
+      - Google Translate: Miễn phí
+      - DeepL: Chất lượng tốt hơn, cần API key (https://www.deepl.com/pro-api)
    
-   2. TÙY CHỈNH THỦ CÔNG:
-      Bạn có thể tùy chỉnh:
-      - Cỡ chữ, phông chữ, độ đậm
-      - Màu chữ, màu nền, màu văn bản gốc
-      - Độ trong suốt
-      - Kích thước màn hình dịch
-      - Căn lề, khoảng cách dòng
-      - Viền, padding
-      - Hiển thị văn bản gốc
-      - Lưu lịch sử dịch
+   7. DEEPL CONTEXT WINDOW (chỉ khi chọn DeepL):
+      - Số subtitle trước đó dùng làm ngữ cảnh (0-3, mặc định: 2)
+      - Giúp dịch hội thoại chính xác hơn
+
+BƯỚC 3: Tùy chỉnh giao diện (Tab "Giao Diện Dịch")
+   1. CẤU HÌNH NHANH (PRESET):
+      - "Tối Ưu Tốc Độ": Game có hội thoại nhanh
+      - "Cân Bằng": Hầu hết game/ứng dụng (khuyến nghị)
+      - "Tối Ưu Chất Lượng": Cần đọc kỹ
+      - "Mặc Định": Cài đặt mặc định
+      - ⚠️ Nhấn "Áp Dụng" sau khi chọn preset
+   
+   2. TÙY CHỈNH THỦ CÔNG: Font, màu sắc, kích thước, độ trong suốt, căn lề, v.v.
    
    3. NÚT ĐIỀU KHIỂN:
-      - "Áp Dụng": Áp dụng tất cả cài đặt đã thay đổi
-      - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp màn hình, engine OCR, dịch vụ dịch và DeepL key)
+      - "Áp Dụng": Áp dụng cài đặt
+      - "Đặt Lại Tất Cả": Reset về mặc định (KHÔNG reset vùng chụp, engine OCR, dịch vụ, DeepL key)
 
 BƯỚC 4: Bắt đầu dịch (Tab "Điều Khiển")
-   1. Nhấn nút "Bắt Đầu Dịch"
-   2. Màn hình dịch sẽ xuất hiện trên ứng dụng của bạn
-   3. Văn bản sẽ được dịch tự động khi xuất hiện trong ứng dụng
-   4. Công cụ sẽ tự động xử lý nhiều hộp thoại liên tiếp
+   1. Nhấn "Bắt Đầu Dịch"
+   2. Màn hình dịch xuất hiện, văn bản được dịch tự động
+   3. Công cụ tự động xử lý nhiều hộp thoại liên tiếp
 
 BƯỚC 5: Sử dụng màn hình dịch
-   • DI CHUYỂN: Kéo thả màn hình dịch đến vị trí mong muốn
-   • THAY ĐỔI KÍCH THƯỚC: Kéo các cạnh hoặc góc để thay đổi kích thước
-   • CUỘN VĂN BẢN: Cuộn lên/xuống trong màn hình dịch nếu văn bản quá dài
-   • KHÓA: Tích vào "Khóa màn hình dịch" trong tab "Điều Khiển" để ngăn di chuyển nhầm
-   • TỰ ĐỘNG LƯU: Vị trí và kích thước được tự động lưu lại
+   • DI CHUYỂN: Kéo thả màn hình dịch
+   • THAY ĐỔI KÍCH THƯỚC: Kéo cạnh/góc
+   • CUỘN: Cuộn lên/xuống nếu văn bản dài
+   • KHÓA: Tích "Khóa màn hình dịch" trong tab "Điều Khiển" để tránh di chuyển nhầm
+   • TỰ ĐỘNG LƯU: Vị trí và kích thước được lưu tự động
 
 3. MẸO SỬ DỤNG
 
-   • SỬ DỤNG PRESET:
-     - Game có hội thoại nhanh: Chọn "Tối Ưu Tốc Độ"
-     - Game/ứng dụng thường: Chọn "Cân Bằng"
-     - Cần đọc kỹ: Chọn "Tối Ưu Chất Lượng"
+   • PRESET: "Tối Ưu Tốc Độ" cho game nhanh, "Cân Bằng" cho hầu hết trường hợp, "Tối Ưu Chất Lượng" khi cần đọc kỹ
    
-   • CHỌN VÙNG CHỤP:
-     - Chọn càng chính xác càng tốt - chỉ vùng hộp thoại
-     - Tránh chọn vùng quá lớn - sẽ dịch chậm hơn
+   • CHỌN VÙNG: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
    
-   • CHỌN ENGINE OCR:
-     - Thử cả Tesseract và EasyOCR để xem engine nào chính xác hơn
-     - EasyOCR thường chính xác hơn cho game hoặc các văn bản tiếng Nhật, Hàn, Trung
-     - Nếu chọn EasyOCR và máy có card đồ họa NVIDIA, chọn "GPU" trong "EasyOCR Mode" để chạy mượt hơn
+   • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung. Nếu có NVIDIA GPU → chọn "GPU" mode
    
-   • CHỌN DỊCH VỤ DỊCH THUẬT:
-     - Google Translate: Miễn phí, đủ dùng cho hầu hết trường hợp
-     - DeepL: Chất lượng tốt hơn, đặc biệt cho tiếng Nhật, Hàn (cần trả phí)
+   • DỊCH VỤ: Google Translate (miễn phí) hoặc DeepL (chất lượng tốt hơn, có phí). DeepL: Context Window = 2 (khuyến nghị)
    
-   • TỐI ƯU GIAO DIỆN:
-     - Tắt hiển thị văn bản gốc để giảm tải
-     - Giảm độ trong suốt nếu cần đọc rõ hơn
-     - Sử dụng phông chữ đơn giản (Arial, Helvetica) để hiển thị nhanh hơn
+   • TỐI ƯU: Tắt hiển thị văn bản gốc, dùng font đơn giản (Arial, Helvetica), giảm độ trong suốt nếu cần
    
-   • KHI CHƠI GAME:
-     - Khóa màn hình dịch để tránh di chuyển nhầm
-     - Sử dụng preset "Tối Ưu Tốc Độ" cho game có hội thoại nhanh
-     - Đặt màn hình dịch ở vị trí không che khuất gameplay
+   • KHI CHƠI GAME: Khóa màn hình dịch, dùng preset "Tối Ưu Tốc Độ", đặt màn hình dịch không che gameplay
 
 4. XỬ LÝ SỰ CỐ
 
    • OCR KHÔNG HOẠT ĐỘNG:
-     - Kiểm tra Tesseract đã cài đặt đúng chưa
-     - Sử dụng nút "Duyệt" trong tab "Cài Đặt" để chọn đường dẫn Tesseract
-     - Thử chuyển sang EasyOCR nếu có
-     - Kiểm tra ngôn ngữ nguồn đã chọn đúng chưa
+     - Kiểm tra Tesseract đã cài đúng → Dùng nút "Duyệt" để chọn đường dẫn
+     - Thử chuyển sang EasyOCR
+     - Kiểm tra ngôn ngữ nguồn đã chọn đúng
    
    • DỊCH KHÔNG HOẠT ĐỘNG:
-     - Kiểm tra kết nối internet (cần cho Google Translate và DeepL)
-     - Nếu dùng DeepL: Kiểm tra API key đã nhập đúng chưa
-     - Thử chuyển sang Google Translate nếu DeepL có vấn đề
+     - Kiểm tra kết nối internet
+     - Nếu dùng DeepL: Kiểm tra API key
+     - Thử chuyển sang Google Translate
    
    • DỊCH SAI:
      - Thử thay đổi ngôn ngữ nguồn
      - Thử chuyển engine OCR (Tesseract ↔ EasyOCR)
-     - Đảm bảo văn bản trong vùng chụp rõ ràng, không bị mờ
+     - Đảm bảo văn bản rõ ràng, không mờ
    
    • CHẬM HOẶC LAG:
-     - Nếu dùng EasyOCR: Chọn "GPU" trong "EasyOCR Mode" nếu máy có card đồ họa NVIDIA
+     - EasyOCR: Chọn "GPU" mode nếu có NVIDIA GPU
      - Tăng khoảng thời gian cập nhật (200-300ms)
-     - Sử dụng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
-     - Chọn vùng chụp nhỏ hơn
-     - Tắt hiển thị văn bản gốc
-     - Đóng các ứng dụng khác đang chạy
-     - Thử chuyển sang Tesseract nếu EasyOCR quá chậm
+     - Dùng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
+     - Chọn vùng chụp nhỏ hơn, tắt hiển thị văn bản gốc
+     - Thử chuyển sang Tesseract
    
    • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
-     - Kiểm tra màn hình dịch không bị di chuyển ra ngoài màn hình
-     - Thử dừng và khởi động lại dịch
-     - Nhấn "Đặt Lại Tất Cả" trong tab "Giao Diện Dịch" để reset vị trí
-     - Đảm bảo tỷ lệ hiển thị màn hình Windows là 100%
+     - Kiểm tra không bị di chuyển ra ngoài màn hình
+     - Dừng và khởi động lại dịch
+     - Nhấn "Đặt Lại Tất Cả" để reset vị trí
+     - Đảm bảo tỷ lệ hiển thị Windows là 100%
    
-   • XEM CHI TIẾT:
-     - Xem tab "Trạng Thái" để biết thông tin chi tiết về lỗi
-     - Kiểm tra file error_log.txt trong thư mục chương trình (nếu có)
+   • XEM CHI TIẾT: Tab "Trạng Thái" hoặc file error_log.txt
 
 5. LƯU Ý QUAN TRỌNG
 
-   • Cần kết nối internet để dịch (Google Translate và DeepL)
-   • Chất lượng dịch phụ thuộc vào:
-     - Độ rõ và kích thước văn bản
-     - Độ tương phản nền
-     - Kiểu phông chữ
-     - Độ chính xác của OCR
-   • Tất cả cài đặt được tự động lưu lại
-   • Công cụ sẽ tự động điều chỉnh tốc độ để hoạt động mượt mà
-   • Nút "Đặt Lại Tất Cả" sẽ KHÔNG reset:
-     - Vùng chụp màn hình (giữ nguyên vùng đã chọn)
-     - Engine OCR (giữ nguyên Tesseract hoặc EasyOCR)
-     - Dịch vụ dịch thuật (giữ nguyên Google hoặc DeepL)
-     - DeepL API Key (giữ nguyên key đã nhập)
+   • Cần kết nối internet để dịch
+   • Chất lượng dịch phụ thuộc: Độ rõ văn bản, tương phản nền, font, độ chính xác OCR
+   • Tất cả cài đặt được tự động lưu
+   • Nút "Đặt Lại Tất Cả" KHÔNG reset: Vùng chụp, Engine OCR, Dịch vụ, DeepL key
 
 6. NGÔN NGỮ ĐƯỢC HỖ TRỢ
 
-   NGÔN NGỮ NGUỒN (OCR):
-   • Tiếng Anh, Nhật, Hàn, Trung (Giản thể và Phồn thể), Pháp, Đức, Tây Ban Nha
+   NGÔN NGỮ NGUỒN (OCR): Anh, Nhật, Hàn, Trung (Giản thể/Phồn thể), Pháp, Đức, Tây Ban Nha
    
-   NGÔN NGỮ ĐÍCH (DỊCH THUẬT):
-   • Tiếng Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
+   NGÔN NGỮ ĐÍCH: Việt, Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha
 
 7. CÁC TAB TRONG CÔNG CỤ
 
-   TAB 1: CÀI ĐẶT
-   • Chọn vùng chụp màn hình
-   • Ngôn ngữ nguồn (OCR)
-   • Khoảng thời gian cập nhật
-   • Engine OCR (Tesseract/EasyOCR)
-   • EasyOCR Mode (Tự động/CPU/GPU) - chỉ hiện khi chọn EasyOCR
-   • EasyOCR Multi-scale - chỉ hiện khi chọn EasyOCR
-   • Tesseract Options (Multi-scale, Text Region Detection) - chỉ hiện khi chọn Tesseract
-   • Đường dẫn Tesseract (khi chọn Tesseract)
-   • Ngôn ngữ đích
-   • Dịch vụ dịch thuật (Google/DeepL)
-   • DeepL API Key (khi chọn DeepL)
+   TAB 1: CÀI ĐẶT - Chọn vùng, ngôn ngữ, engine OCR, dịch vụ, cấu hình OCR
    
-   TAB 2: GIAO DIỆN DỊCH
-   • Cấu hình nhanh (Preset): Tối Ưu Tốc Độ, Cân Bằng, Tối Ưu Chất Lượng, Mặc Định
-   • Tùy chỉnh thủ công: Font, màu sắc, kích thước, độ trong suốt, v.v.
-   • Nút "Áp Dụng" và "Đặt Lại Tất Cả"
+   TAB 2: GIAO DIỆN DỊCH - Preset nhanh, tùy chỉnh font/màu/kích thước
    
-   TAB 3: ĐIỀU KHIỂN
-   • Nút "Bắt Đầu Dịch"
-   • Nút "Dừng Dịch"
-   • Khóa màn hình dịch
+   TAB 3: ĐIỀU KHIỂN - Bắt đầu/Dừng dịch, khóa màn hình dịch
    
-   TAB 4: TRẠNG THÁI
-   • Hiển thị nhật ký hoạt động
-   • Thông tin về lỗi, cảnh báo, và trạng thái
+   TAB 4: TRẠNG THÁI - Nhật ký hoạt động, lỗi, cảnh báo
    
-   TAB 5: HƯỚNG DẪN
-   • Hướng dẫn sử dụng đầy đủ (tab này)
+   TAB 5: HƯỚNG DẪN - Hướng dẫn sử dụng đầy đủ (tab này)
 
 Chúc bạn sử dụng công cụ hiệu quả!
         """
@@ -1812,6 +1698,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.deepl_api_key = config.get('deepl_api_key', '')
             self.use_deepl = config.get('use_deepl', False)
             self.target_language = config.get('target_language', 'vi')
+            self.deepl_context_window_size = config.get('deepl_context_window_size', 2)
+            # Validate deepl_context_window_size
+            if not isinstance(self.deepl_context_window_size, int) or self.deepl_context_window_size < 0 or self.deepl_context_window_size > 3:
+                self.deepl_context_window_size = 2
+            # Update context manager if it exists
+            if hasattr(self, 'deepl_context_manager'):
+                self.deepl_context_manager.set_context_size(self.deepl_context_window_size)
             
         except (FileNotFoundError, IOError, PermissionError) as e:
             log_error("Lỗi đọc file cấu hình", e)
@@ -1844,6 +1737,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'custom_tesseract_path': tesseract_path_to_save,
                 'deepl_api_key': self.deepl_api_key,
                 'use_deepl': self.use_deepl,
+                'deepl_context_window_size': self.deepl_context_window_size,
                 'overlay_settings': {
                     'font_size': self.overlay_font_size,
                     'font_family': self.overlay_font_family,
@@ -1941,6 +1835,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Handle target language change"""
         self.target_language = self.target_lang_var.get()
         self.translator = GoogleTranslator(source='auto', target=self.target_language)
+        # Clear DeepL context when target language changes
+        if hasattr(self, 'deepl_context_manager'):
+            self.deepl_context_manager.clear_context()
         self.save_config()
         self.log(f"Đã đổi ngôn ngữ đích: {self.target_language}")
     
@@ -1985,6 +1882,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         else:
             # Chuyển về Google Translate
             if old_use_deepl:
+                # Clear DeepL context when switching to Google
+                if hasattr(self, 'deepl_context_manager'):
+                    self.deepl_context_manager.clear_context()
                 self.log("Đã chuyển sang Google Translate")
     
     def on_deepl_key_change(self, event=None):
@@ -2002,9 +1902,22 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     log_error("Lỗi khởi tạo DeepL khi cập nhật API key", e)
                     self.log(f"Lỗi khởi tạo DeepL: {e}")
     
+    def on_deepl_context_window_change(self, event=None):
+        """Handle DeepL context window size change"""
+        if hasattr(self, 'deepl_context_window_var'):
+            new_size = self.deepl_context_window_var.get()
+            if new_size != self.deepl_context_window_size:
+                self.deepl_context_window_size = new_size
+                self.deepl_context_manager.set_context_size(new_size)
+                self.save_config()
+                self.log(f"Đã thay đổi DeepL context window size: {new_size}")
+    
     def on_source_lang_change(self, event=None):
         """Handle source language change"""
         self.source_language = self.source_lang_var.get()
+        # Clear DeepL context when source language changes
+        if hasattr(self, 'deepl_context_manager'):
+            self.deepl_context_manager.clear_context()
         self.save_config()
         self.log(f"Đã thay đổi ngôn ngữ nguồn thành: {self.source_language}")
         
@@ -2902,12 +2815,21 @@ Chúc bạn sử dụng công cụ hiệu quả!
         # Reset text history and cache
         self.text_history = []
         self.translation_cache.clear()
+        # Clear unified cache
+        try:
+            self.unified_cache.clear_all()
+        except Exception as e:
+            log_error("Error clearing unified cache", e)
         self.pending_translation = None
         self.text_stability_counter = 0
         self.previous_text = ""
         self.similar_texts_count = 0
         self.prev_ocr_text = ""
         self.last_processed_subtitle = None
+        
+        # Clear DeepL context when stopping translation
+        if hasattr(self, 'deepl_context_manager'):
+            self.deepl_context_manager.clear_context()
         
         # Clear queues
         while not self.ocr_queue.empty():
@@ -3536,6 +3458,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def perform_easyocr(self, processed_images):
         """Thực hiện OCR bằng EasyOCR - tối ưu CPU"""
         try:
+            if not processed_images or len(processed_images) == 0:
+                log_debug("Empty processed_images for EasyOCR")
+                return ""
+            
             # Throttle: EasyOCR rất nặng CPU, chỉ gọi mỗi 0.8s
             now = time.monotonic()
             time_since_last_call = now - self.last_easyocr_call_time
@@ -3552,32 +3478,56 @@ Chúc bạn sử dụng công cụ hiệu quả!
             # Sử dụng ảnh đầu tiên (đã được xử lý tốt nhất)
             img = processed_images[0]
             
+            if img is None or img.size == 0:
+                log_debug("Empty image for EasyOCR")
+                return ""
+            
             # Resize ảnh nhỏ hơn để giảm CPU (EasyOCR vẫn chính xác với ảnh nhỏ)
             # Giữ max dimension <= 800px để giảm ~50% CPU
             if isinstance(img, np.ndarray):
                 # Convert numpy array to PIL để resize dễ hơn
-                img = Image.fromarray(img)
+                try:
+                    img = Image.fromarray(img)
+                except Exception as img_conv_err:
+                    log_error("Error converting numpy array to PIL Image for EasyOCR", img_conv_err)
+                    return ""
             
             # PIL Image - resize nếu cần
-            w, h = img.size
-            max_dim = max(w, h)
-            if max_dim > 800:
-                scale = 800 / max_dim
-                new_w, new_h = int(w * scale), int(h * scale)
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            try:
+                w, h = img.size
+                max_dim = max(w, h)
+                if max_dim > 800:
+                    scale = 800 / max_dim
+                    new_w, new_h = int(w * scale), int(h * scale)
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            except Exception as resize_err:
+                log_error("Error resizing image for EasyOCR", resize_err)
+                return ""
             
             # Convert PIL Image to numpy array cho EasyOCR
-            img_array = np.array(img)
+            try:
+                img_array = np.array(img)
+            except Exception as array_err:
+                log_error("Error converting PIL Image to numpy array for EasyOCR", array_err)
+                return ""
             
             # Thực hiện OCR
-            self.last_easyocr_call_time = time.monotonic()
-            results = reader.readtext(img_array)
+            try:
+                self.last_easyocr_call_time = time.monotonic()
+                results = reader.readtext(img_array)
+            except Exception as ocr_err:
+                log_error("EasyOCR readtext error", ocr_err)
+                return ""
             
             # Trích xuất text từ kết quả
             texts = []
-            for (bbox, text, confidence) in results:
-                if text and confidence > 0.3:  # Confidence threshold cho EasyOCR
-                    texts.append(text)
+            try:
+                for (bbox, text, confidence) in results:
+                    if text and confidence > 0.3:  # Confidence threshold cho EasyOCR
+                        texts.append(text)
+            except Exception as extract_err:
+                log_error("Error extracting text from EasyOCR results", extract_err)
+                return ""
             
             if texts:
                 combined_text = ' '.join(texts).strip()
@@ -3632,16 +3582,21 @@ Chúc bạn sử dụng công cụ hiệu quả!
         OCR region với confidence filtering
         Scale được gọi TRONG function này, không phải trước
         """
-        x, y, w, h = region
-        if len(img.shape) == 3:
-            roi = img[y:y+h, x:x+w]
-        else:
-            roi = img[y:y+h, x:x+w]
-        
-        # Scale for OCR
-        scaled_roi = self.scale_for_ocr(roi)
-        
         try:
+            x, y, w, h = region
+            if len(img.shape) == 3:
+                roi = img[y:y+h, x:x+w]
+            else:
+                roi = img[y:y+h, x:x+w]
+            
+            # Validate ROI
+            if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
+                log_debug(f"Empty ROI for region {region}")
+                return ""
+            
+            # Scale for OCR
+            scaled_roi = self.scale_for_ocr(roi)
+            
             # Dùng cached config
             config = self.cached_tess_params if self.cached_tess_params else self.get_tesseract_config('gaming')
             
@@ -3656,8 +3611,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
             for i in range(len(data['text'])):
                 if not data['text'][i].strip():
                     continue
-                if float(data['conf'][i]) >= confidence_threshold:
-                    filtered_text.append(data['text'][i])
+                try:
+                    conf = float(data['conf'][i])
+                    if conf >= confidence_threshold:
+                        filtered_text.append(data['text'][i])
+                except (ValueError, TypeError, IndexError) as conf_err:
+                    log_debug(f"Error parsing confidence value: {conf_err}")
+                    continue
             
             return ' '.join(filtered_text)
         except Exception as e:
@@ -3667,87 +3627,25 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def clean_ocr_text(self, text):
         """
         Làm sạch và sửa lỗi nhận dạng OCR thường gặp
+        Sử dụng modules từ modules package
         """
         if not text:
             return ""
         
-        cleaned = text.strip()
+        # Sử dụng post_process_ocr_text_general với source_language
+        cleaned = post_process_ocr_text_general(text, lang=self.source_language)
         
-        # Sửa lỗi Unicode thường gặp
-        ocr_errors = {
-            '\u201E': '"',  # Double low-9 quotation mark
-            '\u2019': "'",  # Right single quotation mark
-            '\u2014': '-',  # Em dash
-            '\u2013': '-',  # En dash
-        }
-        
-        # Sửa lỗi theo ngôn ngữ
-        if self.source_language.startswith('fra') or self.source_language.startswith('fr'):
-            cleaned = cleaned.replace('||', 'Il')
-        
-        # English-specific OCR fixes
-        if self.source_language.startswith('eng') or self.source_language.startswith('en'):
-            # Special case for | character (commonly at start of sentences)
-            cleaned = re.sub(r'^\|\s', 'I ', cleaned)  # | at start followed by space
-            cleaned = re.sub(r'\s\|\s', ' I ', cleaned)  # | surrounded by spaces
-            
-            # Other fixes using word boundaries
-            english_ocr_fixes = {
-                '{': '(', '}': ')', '\\/': 'V',
-            }
-            for error, correction in english_ocr_fixes.items():
-                cleaned = re.sub(r'\b' + re.escape(error) + r'\b', correction, cleaned)
-        
-        # Áp dụng các fix Unicode
-        for error, correction in ocr_errors.items():
-            cleaned = cleaned.replace(error, correction)
-        
-        # Xóa khoảng trắng thừa (nhưng giữ newlines nếu có)
-        cleaned = re.sub(r'[ \t]+', ' ', cleaned)
-        
-        # Game-specific: fix character names (capitalize properly)
-        name_match = re.search(r'^([A-Za-z\s]+):', cleaned)
-        if name_match:
-            char_name = name_match.group(1).strip()
-            char_name = ' '.join(word.capitalize() for word in char_name.split())
-            cleaned = cleaned.replace(name_match.group(0), f"{char_name}:")
-        
-        # Fix spacing sau tên nhân vật (John:Text -> John: Text)
-        cleaned = re.sub(r'(\w+:)(\w)', r'\1 \2', cleaned)
-        
-        # Xóa ký tự nhiễu ở đầu/cuối
-        cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}', '', cleaned)
-        cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}$', '', cleaned)
-        
-        # Chuẩn hóa dấu ngoặc kép và nháy đơn
-        cleaned = cleaned.replace('"', '"').replace('"', '"')
-        cleaned = cleaned.replace(''', "'").replace(''', "'")
+        # Áp dụng game subtitle specific processing
+        cleaned = post_process_ocr_for_game_subtitle(cleaned)
         
         return cleaned.strip()
     
     def remove_text_after_last_punctuation_mark(self, text):
         """
         Xóa garbage sau dấu câu cuối
+        Sử dụng hàm từ modules package
         """
-        if not text:
-            return text
-        
-        # Tìm dấu câu cuối cùng: . ! ? ... hoặc …
-        pattern = r'[.!?]|\.{3}|…'
-        matches = list(re.finditer(pattern, text))
-        if not matches:
-            return text
-        
-        last_match = matches[-1]
-        end_pos = last_match.end()
-        
-        # Xử lý ellipsis đặc biệt (...)
-        if last_match.group() == ".":
-            # Check xem có phải ... không (2 dấu chấm tiếp theo)
-            if end_pos + 2 <= len(text) and text[end_pos:end_pos+2] == "..":
-                end_pos += 2
-        
-        return text[:end_pos]
+        return remove_text_after_last_punctuation_mark(text)
     
     def post_process_translation_text(self, text):
         """Post-process translation text"""
@@ -4029,9 +3927,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
             # Trả về False để an toàn (không dịch nếu có lỗi)
             return False
     
-    def translate_with_deepl(self, text):
+    def translate_with_deepl(self, text, source_text_for_context=None):
         """
-        Dịch văn bản sử dụng DeepL API
+        Dịch văn bản sử dụng DeepL API với context window support
         """
         if not self.deepl_api_client:
             # Thử khởi tạo lại nếu chưa có
@@ -4044,6 +3942,17 @@ Chúc bạn sử dụng công cụ hiệu quả!
             else:
                 return None
         
+        # Check circuit breaker
+        if self.deepl_translation_circuit_breaker.should_force_refresh():
+            log_debug("DeepL circuit breaker is open, forcing client refresh")
+            try:
+                self.deepl_api_client = deepl.Translator(self.deepl_api_key)
+                self.deepl_translation_circuit_breaker.reset()
+            except Exception as e:
+                log_error("Error refreshing DeepL client", e)
+                return None
+        
+        start_time = time.time()
         try:
             # Map target language to DeepL format
             deepl_target_map = {
@@ -4058,17 +3967,73 @@ Chúc bạn sử dụng công cụ hiệu quả!
             }
             target_lang = deepl_target_map.get(self.target_language, 'EN-US')
             
+            # Map source language to DeepL format
+            deepl_source_map = {
+                'vi': 'VI',
+                'en': 'EN',
+                'ja': 'JA',
+                'ko': 'KO',
+                'zh': 'ZH',
+                'fr': 'FR',
+                'de': 'DE',
+                'es': 'ES'
+            }
+            source_lang = deepl_source_map.get(self.source_language, None)
+            
+            # Build context string if context window is enabled
+            context_string = None
+            if self.deepl_context_window_size > 0:
+                context_string = self.deepl_context_manager.build_context_string()
+                if context_string:
+                    log_debug(f"DeepL context ({len(context_string)} chars, {self.deepl_context_window_size} subtitles): {context_string[:100]}...")
+            
+            # Prepare translation parameters
+            translate_params = {
+                'text': text,
+                'target_lang': target_lang
+            }
+            
+            # Add source language if available (required for context)
+            if source_lang:
+                translate_params['source_lang'] = source_lang
+            
+            # Add context if available (IMPORTANT: context not counted for billing!)
+            # Context only works with explicit source_lang
+            if context_string and source_lang:
+                translate_params['context'] = context_string
+                log_debug(f"Using DeepL context window: {self.deepl_context_window_size} previous subtitles")
+            
             # Translate with DeepL
-            result = self.deepl_api_client.translate_text(
-                text,
-                target_lang=target_lang,
-                source_lang=None  # Auto-detect
-            )
+            result = self.deepl_api_client.translate_text(**translate_params)
+            
+            duration = time.time() - start_time
             
             if result and hasattr(result, 'text'):
-                return result.text
+                translated_text = result.text
+                
+                # Update context window with source text after successful translation
+                # Only update if source_text_for_context is provided (single translation case)
+                if source_text_for_context:
+                    try:
+                        self.deepl_context_manager.update_context(
+                            source_text_for_context,
+                            self.source_language,
+                            self.target_language
+                        )
+                    except Exception as e:
+                        log_error("Error updating DeepL context", e)
+                
+                # Record successful call in circuit breaker
+                self.deepl_translation_circuit_breaker.record_call(duration, success=True)
+                
+                return translated_text
+            
+            # Record failed call
+            self.deepl_translation_circuit_breaker.record_call(duration, success=False)
             return None
         except Exception as e:
+            duration = time.time() - start_time
+            self.deepl_translation_circuit_breaker.record_call(duration, success=False)
             log_error("DeepL translation error", e)
             return None
     
@@ -4253,66 +4218,14 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 last_ocr_proc_time = ocr_proc_start_time
                 
                 # OCR - sử dụng handlers nếu có, fallback về code cũ
-                if self.ocr_engine == "tesseract" and self.tesseract_handler:
-                    # Sử dụng Tesseract Handler
-                    img_np = np.array(img)
-                    img_shape = img_np.shape
-                    
-                    # Convert to BGR
-                    if len(img_shape) == 3:
-                        if img_shape[2] == 3:
-                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-                        elif img_shape[2] == 4:
-                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
-                        else:
-                            img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_BGR2BGR)
-                    elif len(img_shape) == 2:
-                        img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
-                    else:
-                        img_cv_bgr = img_np
-                    
-                    # OCR với handler (adaptive mode, gaming config)
-                    ocr_raw_text = self.tesseract_handler.recognize(
-                        img_cv_bgr, 
-                        prep_mode='adaptive', 
-                        block_size=41, 
-                        c_value=-60,
-                        confidence_threshold=50
-                    )
-                    
-                    # Post-process text
-                    text = self.clean_ocr_text(ocr_raw_text)
-                    
-                    # Apply linebreak conversion
-                    text = text.replace('\n', ' ')
-                    
-                    # Remove trailing garbage nếu có punctuation
-                    if text:
-                        pattern = r'[.!?]|\.{3}|…'
-                        if not list(re.finditer(pattern, text)):
-                            text = ""
-                        else:
-                            text = self.remove_text_after_last_punctuation_mark(text)
-                            
-                elif self.ocr_engine == "easyocr":
-                    # Sử dụng EasyOCR - ưu tiên handler nếu có, fallback về reader cũ
-                    if self.easyocr_handler:
-                        # Sử dụng EasyOCR Handler (tối ưu hơn)
-                        img_np = np.array(img)
-                        text = self.easyocr_handler.recognize(img_np, confidence_threshold=0.3)
-                        if text:
-                            text = self.clean_ocr_text(text)
-                    else:
-                        # Fallback: sử dụng EasyOCR reader cũ (nếu handler không available)
-                        processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
-                        text = self.perform_easyocr(processed_images)
-                else:
-                    # Tesseract mode
-                    if self.ocr_engine == "tesseract":
-                        # Convert PIL to numpy array
+                text = ""
+                try:
+                    if self.ocr_engine == "tesseract" and self.tesseract_handler:
+                        # Sử dụng Tesseract Handler
                         img_np = np.array(img)
                         img_shape = img_np.shape
                         
+                        # Convert to BGR
                         if len(img_shape) == 3:
                             if img_shape[2] == 3:
                                 img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
@@ -4325,23 +4238,80 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         else:
                             img_cv_bgr = img_np
                         
-                        processed_cv_img = self.preprocess_for_ocr_cv(img_cv_bgr, mode='adaptive', block_size=41, c_value=-60)
+                        # OCR với handler (adaptive mode, gaming config)
+                        ocr_raw_text = self.tesseract_handler.recognize(
+                            img_cv_bgr, 
+                            prep_mode='adaptive', 
+                            block_size=41, 
+                            c_value=-60,
+                            confidence_threshold=50
+                        )
                         
-                        if self.cached_prep_mode != 'adaptive':
-                            self.cached_prep_mode = 'adaptive'
-                            self.cached_tess_params = self.get_tesseract_config('gaming')
-                        
-                        full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
-                        ocr_raw_text = self.ocr_region_with_confidence(processed_cv_img, full_img_region, confidence_threshold=50)
+                        # Post-process text
                         text = self.clean_ocr_text(ocr_raw_text)
+                        
+                        # Apply linebreak conversion
                         text = text.replace('\n', ' ')
                         
+                        # Remove trailing garbage nếu có punctuation
                         if text:
                             pattern = r'[.!?]|\.{3}|…'
                             if not list(re.finditer(pattern, text)):
                                 text = ""
                             else:
                                 text = self.remove_text_after_last_punctuation_mark(text)
+                                
+                    elif self.ocr_engine == "easyocr":
+                        # Sử dụng EasyOCR - ưu tiên handler nếu có, fallback về reader cũ
+                        if self.easyocr_handler:
+                            # Sử dụng EasyOCR Handler (tối ưu hơn)
+                            img_np = np.array(img)
+                            text = self.easyocr_handler.recognize(img_np, confidence_threshold=0.3)
+                            if text:
+                                text = self.clean_ocr_text(text)
+                        else:
+                            # Fallback: sử dụng EasyOCR reader cũ (nếu handler không available)
+                            processed_images, scale_factor = self.preprocess_image(img, mode='adaptive', block_size=41, c_value=-60)
+                            text = self.perform_easyocr(processed_images)
+                    else:
+                        # Tesseract mode
+                        if self.ocr_engine == "tesseract":
+                            # Convert PIL to numpy array
+                            img_np = np.array(img)
+                            img_shape = img_np.shape
+                            
+                            if len(img_shape) == 3:
+                                if img_shape[2] == 3:
+                                    img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+                                elif img_shape[2] == 4:
+                                    img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
+                                else:
+                                    img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_BGR2BGR)
+                            elif len(img_shape) == 2:
+                                img_cv_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+                            else:
+                                img_cv_bgr = img_np
+                            
+                            processed_cv_img = self.preprocess_for_ocr_cv(img_cv_bgr, mode='adaptive', block_size=41, c_value=-60)
+                            
+                            if self.cached_prep_mode != 'adaptive':
+                                self.cached_prep_mode = 'adaptive'
+                                self.cached_tess_params = self.get_tesseract_config('gaming')
+                            
+                            full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
+                            ocr_raw_text = self.ocr_region_with_confidence(processed_cv_img, full_img_region, confidence_threshold=50)
+                            text = self.clean_ocr_text(ocr_raw_text)
+                            text = text.replace('\n', ' ')
+                            
+                            if text:
+                                pattern = r'[.!?]|\.{3}|…'
+                                if not list(re.finditer(pattern, text)):
+                                    text = ""
+                                else:
+                                    text = self.remove_text_after_last_punctuation_mark(text)
+                except Exception as ocr_err:
+                    log_error(f"OCR processing error (engine: {self.ocr_engine})", ocr_err)
+                    text = ""  # Set empty text on error
                 
                 if not text or self.is_placeholder_text(text):
                     self.text_stability_counter = 0
@@ -4391,16 +4361,19 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     
                     # Chỉ translate nếu đã đủ thời gian
                     if (now - self.last_successful_translation_time) >= adaptive_trans_interval:
-                        # Start async translation
-                        self.start_async_translation(stable_text, 0)
-                        # QUAN TRỌNG: Update ngay lập tức để cho phép dialog tiếp theo được xử lý
-                        # (không chờ translation hoàn thành)
-                        self.last_successful_translation_time = now
-                        self.text_stability_counter = 0
-                        self.last_processed_subtitle = stable_text
-                        similar_texts_count = 0
-                        # Clear text history sau khi đã dịch để tránh ảnh hưởng đến text mới
-                        self.text_history = []
+                        try:
+                            # Start async translation
+                            self.start_async_translation(stable_text, 0)
+                            # QUAN TRỌNG: Update ngay lập tức để cho phép dialog tiếp theo được xử lý
+                            # (không chờ translation hoàn thành)
+                            self.last_successful_translation_time = now
+                            self.text_stability_counter = 0
+                            self.last_processed_subtitle = stable_text
+                            similar_texts_count = 0
+                            # Clear text history sau khi đã dịch để tránh ảnh hưởng đến text mới
+                            self.text_history = []
+                        except Exception as start_trans_err:
+                            log_error("Error starting async translation", start_trans_err)
             
             except Exception as e_ocr_loop:
                 log_error("OCR thread error", e_ocr_loop)
@@ -4436,9 +4409,14 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 try:
                     text_to_translate = self.translation_queue.get(timeout=0.1)
                     if text_to_translate and not self.is_placeholder_text(text_to_translate):
-                        self.start_async_translation(text_to_translate, 0)
+                        try:
+                            self.start_async_translation(text_to_translate, 0)
+                        except Exception as start_err:
+                            log_error("Error starting translation from queue", start_err)
                 except queue.Empty:
-                    pass
+                    pass  # Normal - queue is empty
+                except Exception as queue_err:
+                    log_error("Error getting from translation queue", queue_err)
                 
                 time.sleep(0.1)
             
@@ -4459,10 +4437,15 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def start_async_translation(self, text_to_translate, ocr_sequence_number):
         """Start async translation processing"""
         try:
+            if not text_to_translate or len(text_to_translate.strip()) < 2:
+                log_debug("Skipping translation - text too short or empty")
+                return  # Skip empty or too short text
+            
             self.translation_sequence_counter += 1
             translation_sequence = self.translation_sequence_counter
             
             if len(self.active_translation_calls) >= self.max_concurrent_translation_calls:
+                log_debug(f"Skipping translation - too many concurrent calls ({len(self.active_translation_calls)})")
                 return  # Skip if too many concurrent calls
             
             self.active_translation_calls.add(translation_sequence)
@@ -4489,112 +4472,231 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 return
             
             if clean_text and len(clean_text) > 2:
-                # Check cache - sử dụng cache_manager nếu có
+                # Check unified cache first (primary cache)
                 translated_text = None
                 translator_name = 'deepl' if self.use_deepl else 'google'
                 
-                if self.cache_manager:
-                    # Sử dụng cache_manager (LRU + file cache)
+                try:
+                    translated_text = self.unified_cache.get(
+                        clean_text, 
+                        self.source_language, 
+                        self.target_language, 
+                        translator_name
+                    )
+                except Exception as cache_err:
+                    log_error("Error getting translation from unified cache", cache_err)
+                    translated_text = None
+                
+                # Fallback to cache_manager if unified cache misses
+                if not translated_text and self.cache_manager:
                     try:
                         translated_text = self.cache_manager.get(clean_text, self.source_language, self.target_language, translator_name)
                     except Exception as cache_err:
-                        log_error("Error getting translation from cache", cache_err)
+                        log_error("Error getting translation from cache_manager", cache_err)
                         translated_text = None
-                else:
-                    # Fallback: dùng translation_cache cũ
+                
+                # Fallback to old translation_cache
+                if not translated_text:
                     cache_key = clean_text.lower().strip()
                     if cache_key in self.translation_cache:
                         translated_text = self.translation_cache[cache_key]
                 
                 if not translated_text:
-                    # Chunk text nếu quá dài để dịch nhanh hơn
-                    if len(clean_text) > self.max_text_length_for_translation:
-                        # Chia text thành chunks và dịch từng chunk
-                        chunks = self.chunk_text_for_translation(clean_text, self.max_text_length_for_translation)
-                        translated_chunks = []
-                        
-                        for chunk in chunks:
-                            if not chunk or len(chunk.strip()) < 2:
-                                continue
+                    # Check if batch translation should be used
+                    use_batch = should_use_batch_translation(clean_text)
+                    
+                    if use_batch:
+                        # Use batch translation
+                        try:
+                            # split_into_sentences returns batches (list of lists)
+                            batches = split_into_sentences(clean_text)
                             
+                            if not batches:
+                                # No batches, fallback to single translation
+                                use_batch = False
+                            else:
+                                # Flatten batches into sentences for batch translation
+                                sentences = []
+                                for batch in batches:
+                                    if isinstance(batch, list):
+                                        sentences.extend(batch)
+                                    elif isinstance(batch, str):
+                                        sentences.append(batch)
+                                
+                                if not sentences:
+                                    use_batch = False
+                                elif self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                    # Map target language to DeepL format
+                                    deepl_target_map = {
+                                        'vi': 'VI',
+                                        'en': 'EN-US',
+                                        'ja': 'JA',
+                                        'ko': 'KO',
+                                        'zh': 'ZH',
+                                        'fr': 'FR',
+                                        'de': 'DE',
+                                        'es': 'ES'
+                                    }
+                                    deepl_target_lang = deepl_target_map.get(self.target_language, 'EN-US')
+                                    translated_sentences = translate_batch_deepl(
+                                        self.deepl_api_client, 
+                                        sentences, 
+                                        deepl_target_lang
+                                    )
+                                    # Convert list to string
+                                    if translated_sentences:
+                                        translated_text = " ".join(translated_sentences)
+                                    else:
+                                        translated_text = None
+                                    # Update context after batch translation
+                                    if translated_text:
+                                        try:
+                                            self.deepl_context_manager.update_context(
+                                                clean_text,
+                                                self.source_language,
+                                                self.target_language
+                                            )
+                                        except Exception as e:
+                                            log_error("Error updating DeepL context after batch", e)
+                                else:
+                                    translated_sentences = translate_batch_google(
+                                        self.translator,
+                                        sentences
+                                    )
+                                    # Convert list to string
+                                    if translated_sentences:
+                                        translated_text = " ".join(translated_sentences)
+                                    else:
+                                        translated_text = None
+                        except Exception as batch_err:
+                            log_error("Batch translation failed, falling back to single translation", batch_err)
+                            use_batch = False
+                    
+                    if not use_batch or not translated_text:
+                        # Single translation (original logic)
+                        # Chunk text nếu quá dài để dịch nhanh hơn
+                        if len(clean_text) > self.max_text_length_for_translation:
+                            # Chia text thành chunks và dịch từng chunk
+                            chunks = self.chunk_text_for_translation(clean_text, self.max_text_length_for_translation)
+                            translated_chunks = []
+                            
+                            for chunk in chunks:
+                                if not chunk or len(chunk.strip()) < 2:
+                                    continue
+                                
+                                max_retries = 2
+                                chunk_translated = None
+                                for attempt in range(max_retries):
+                                    try:
+                                        # Check circuit breaker for Google
+                                        if not self.use_deepl:
+                                            if self.google_translation_circuit_breaker.should_force_refresh():
+                                                log_debug("Google Translate circuit breaker is open, skipping")
+                                                break
+                                        
+                                        # Ưu tiên: DeepL > Google
+                                        if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                            chunk_translated = self.translate_with_deepl(chunk, source_text_for_context=chunk)
+                                        else:
+                                            start_time = time.time()
+                                            chunk_translated = self.translator.translate(chunk)
+                                            duration = time.time() - start_time
+                                            self.google_translation_circuit_breaker.record_call(duration, success=chunk_translated is not None)
+                                        
+                                        if self.is_error_message(chunk_translated) or self.is_placeholder_text(chunk_translated):
+                                            chunk_translated = None
+                                            break
+                                        
+                                        break
+                                    except Exception as trans_error:
+                                        if not self.use_deepl:
+                                            duration = time.time() - start_time if 'start_time' in locals() else 0.1
+                                            self.google_translation_circuit_breaker.record_call(duration, success=False)
+                                        if attempt < max_retries - 1:
+                                            time.sleep(0.1 * (attempt + 1))
+                                            continue
+                                        else:
+                                            log_error(f"Translation failed for chunk ({len(chunk)} chars)", trans_error)
+                                            chunk_translated = None
+                                
+                                if chunk_translated:
+                                    translated_chunks.append(chunk_translated)
+                                # Thêm delay nhỏ giữa các chunks để tránh quá tải API
+                                if len(chunks) > 1:
+                                    time.sleep(0.1)
+                            
+                            # Ghép các chunks lại
+                            translated_text = " ".join(translated_chunks) if translated_chunks else None
+                        else:
+                            # Text ngắn, dịch bình thường
                             max_retries = 2
-                            chunk_translated = None
                             for attempt in range(max_retries):
                                 try:
-                                    # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
-                                    if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
-                                        chunk_translated = self.translate_with_deepl(chunk)
-                                    else:
-                                        chunk_translated = self.translator.translate(chunk)
+                                    # Check circuit breaker for Google
+                                    if not self.use_deepl:
+                                        if self.google_translation_circuit_breaker.should_force_refresh():
+                                            log_debug("Google Translate circuit breaker is open, skipping")
+                                            break
                                     
-                                    if self.is_error_message(chunk_translated) or self.is_placeholder_text(chunk_translated):
-                                        chunk_translated = None
+                                    # Ưu tiên: DeepL > Google
+                                    if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                        translated_text = self.translate_with_deepl(clean_text, source_text_for_context=clean_text)
+                                    else:
+                                        start_time = time.time()
+                                        translated_text = self.translator.translate(clean_text)
+                                        duration = time.time() - start_time
+                                        self.google_translation_circuit_breaker.record_call(duration, success=translated_text is not None)
+                                    
+                                    if self.is_error_message(translated_text) or self.is_placeholder_text(translated_text):
+                                        translated_text = None
                                         break
                                     
                                     break
                                 except Exception as trans_error:
+                                    if not self.use_deepl:
+                                        duration = time.time() - start_time if 'start_time' in locals() else 0.1
+                                        self.google_translation_circuit_breaker.record_call(duration, success=False)
                                     if attempt < max_retries - 1:
                                         time.sleep(0.1 * (attempt + 1))
                                         continue
                                     else:
-                                        log_error(f"Translation failed for chunk ({len(chunk)} chars)", trans_error)
-                                        chunk_translated = None
-                            
-                            if chunk_translated:
-                                translated_chunks.append(chunk_translated)
-                            # Thêm delay nhỏ giữa các chunks để tránh quá tải API
-                            if len(chunks) > 1:
-                                time.sleep(0.1)
-                        
-                        # Ghép các chunks lại
-                        translated_text = " ".join(translated_chunks) if translated_chunks else None
-                    else:
-                        # Text ngắn, dịch bình thường
-                        max_retries = 2
-                        for attempt in range(max_retries):
-                            try:
-                                # Ưu tiên: DeepL > Google (cả 2 đều free với limit hợp lý)
-                                if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
-                                    translated_text = self.translate_with_deepl(clean_text)
-                                else:
-                                    translated_text = self.translator.translate(clean_text)
-                                
-                                if self.is_error_message(translated_text) or self.is_placeholder_text(translated_text):
-                                    translated_text = None
-                                    break
-                                
-                                break
-                            except Exception as trans_error:
-                                if attempt < max_retries - 1:
-                                    time.sleep(0.1 * (attempt + 1))
-                                    continue
-                                else:
-                                    log_error("Translation failed after retries", trans_error)
-                                    translated_text = None
+                                        log_error("Translation failed after retries", trans_error)
+                                        translated_text = None
                     
                     # Cache result
                     if translated_text and not self.is_error_message(translated_text):
                         translated_text = self.post_process_translation_text(translated_text)
                         translated_text = self.format_dialog_text(translated_text)
                         
-                        # Store in cache
+                        # Store in unified cache (primary)
+                        try:
+                            self.unified_cache.store(
+                                clean_text, 
+                                self.source_language, 
+                                self.target_language, 
+                                translator_name,
+                                translated_text
+                            )
+                        except Exception as cache_err:
+                            log_error("Error storing translation to unified cache", cache_err)
+                        
+                        # Also store in cache_manager for backward compatibility
                         if self.cache_manager:
-                            # Sử dụng cache_manager
                             try:
                                 self.cache_manager.store(clean_text, self.source_language, self.target_language, translated_text, translator_name)
                             except Exception as cache_err:
-                                log_error("Error storing translation to cache", cache_err)
-                        else:
-                            # Fallback: dùng translation_cache cũ
-                            cache_key = clean_text.lower().strip()
-                            self.translation_cache[cache_key] = translated_text
-                            
-                            # Limit cache size - tối ưu cho long sessions
-                            if len(self.translation_cache) > self.max_cache_size:
-                                # Xóa 20% cache cũ nhất (LRU-like)
-                                keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
-                                for key in keys_to_remove:
-                                    del self.translation_cache[key]
+                                log_error("Error storing translation to cache_manager", cache_err)
+                        
+                        # Also store in old translation_cache for backward compatibility
+                        cache_key = clean_text.lower().strip()
+                        self.translation_cache[cache_key] = translated_text
+                        
+                        # Limit cache size - tối ưu cho long sessions
+                        if len(self.translation_cache) > self.max_cache_size:
+                            # Xóa 20% cache cũ nhất (LRU-like)
+                            keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
+                            for key in keys_to_remove:
+                                del self.translation_cache[key]
                 
                 # Process translation response với chronological ordering
                 # QUAN TRỌNG: Luôn gọi process_translation_response để đảm bảo chronological ordering
@@ -5053,4 +5155,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
