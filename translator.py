@@ -88,7 +88,9 @@ from modules import (
     translate_batch_google,
     translate_batch_deepl,
     should_use_batch_translation,
-    DeepLContextManager
+    DeepLContextManager,
+    should_translate_text,
+    is_valid_dialogue_text
 )
 
 # Handlers cho free OCR engines
@@ -278,7 +280,7 @@ class ScreenTranslator:
             # Fallback: giữ code cũ
             self.easyocr_reader = None
             self.last_easyocr_call_time = 0.0
-            self.easyocr_min_interval = 0.8
+            self.easyocr_min_interval = 0.6  # Balance cho cấu hình tầm trung
         
         # DeepL API support
         self.DEEPL_API_AVAILABLE = DEEPL_API_AVAILABLE
@@ -296,7 +298,7 @@ class ScreenTranslator:
         
         self.overlay_drag_start_x = 0
         self.overlay_drag_start_y = 0
-        self.update_interval = 0.2
+        self.update_interval = 0.18  # Balance: 0.18s cho cấu hình tầm trung
         
         self.overlay_font_size = 15
         self.overlay_font_family = "Arial"
@@ -344,7 +346,7 @@ class ScreenTranslator:
         self.last_processed_subtitle = None
         self.last_successful_translation_time = 0.0
         self.stable_threshold = 2  # Số lần text phải giống nhau để coi là stable (2 = cần ít nhất 2 lần đọc giống nhau để giảm dịch trùng)
-        self.min_translation_interval = 0.1  # Khoảng thời gian tối thiểu giữa các lần dịch (giảm từ 0.2 để nhanh hơn)
+        self.min_translation_interval = 0.08  # Balance: không quá nhanh gây lag máy yếu
         
         # Threading infrastructure
         self.is_running = False  # Flag để control threads
@@ -382,8 +384,9 @@ class ScreenTranslator:
         self.cached_prep_mode = None
         self.cached_tess_params = None
         
-        # Adaptive scan interval
-        self.base_scan_interval = int(self.update_interval * 1000)  # ms
+        # Adaptive scan interval - balance cho cấu hình tầm trung
+        # 250ms = 4 FPS, phù hợp với đa số máy (i5 gen10+, GTX 1650+)
+        self.base_scan_interval = 250  # Balance giữa 200ms (nhanh) và 300ms (chậm)
         self.current_scan_interval = self.base_scan_interval
         self.overload_detected = False  # Track OCR overload state
         
@@ -1034,10 +1037,17 @@ class ScreenTranslator:
         service_combo.grid(row=1, column=1, pady=5)
         service_combo.bind("<<ComboboxSelected>>", self.on_translation_service_change)
         
-        # DeepL API Key (only show if DeepL is available)
+        # DeepL API Key (ẩn/hiện dựa vào translation service)
         next_row = 2
+        self.deepl_widgets = []  # Lưu tất cả widgets liên quan đến DeepL
+        
         if self.DEEPL_API_AVAILABLE:
-            ttk.Label(translation_frame, text="DeepL API Key:").grid(row=next_row, column=0, sticky=tk.W, pady=5)
+            # Label cho API Key
+            deepl_key_label = ttk.Label(translation_frame, text="DeepL API Key:")
+            deepl_key_label.grid(row=next_row, column=0, sticky=tk.W, pady=5)
+            self.deepl_widgets.append(deepl_key_label)
+            
+            # Entry cho API Key
             self.deepl_api_key_var = tk.StringVar(value=self.deepl_api_key)
             deepl_key_entry = ttk.Entry(
                 translation_frame,
@@ -1047,10 +1057,15 @@ class ScreenTranslator:
             )
             deepl_key_entry.grid(row=next_row, column=1, pady=5, sticky=tk.W+tk.E)
             deepl_key_entry.bind("<FocusOut>", self.on_deepl_key_change)
+            self.deepl_widgets.append(deepl_key_entry)
             next_row += 1
             
-            # DeepL Context Window Size
-            ttk.Label(translation_frame, text="Context Window:").grid(row=next_row, column=0, sticky=tk.W, pady=5)
+            # Label cho Context Window
+            context_label = ttk.Label(translation_frame, text="Context Window:")
+            context_label.grid(row=next_row, column=0, sticky=tk.W, pady=5)
+            self.deepl_widgets.append(context_label)
+            
+            # Combobox cho Context Window
             self.deepl_context_window_var = tk.IntVar(value=self.deepl_context_window_size)
             context_window_combo = ttk.Combobox(
                 translation_frame,
@@ -1061,13 +1076,21 @@ class ScreenTranslator:
             )
             context_window_combo.grid(row=next_row, column=1, pady=5, sticky=tk.W)
             context_window_combo.bind("<<ComboboxSelected>>", self.on_deepl_context_window_change)
-            ttk.Label(
+            self.deepl_widgets.append(context_window_combo)
+            
+            # Label mô tả cho Context Window
+            context_desc_label = ttk.Label(
                 translation_frame, 
                 text="(Số subtitle trước đó dùng làm context, 0 = tắt)",
                 font=("Arial", 8),
                 foreground="gray"
-            ).grid(row=next_row, column=1, sticky=tk.E, padx=(5, 0))
+            )
+            context_desc_label.grid(row=next_row, column=1, sticky=tk.E, padx=(5, 0))
+            self.deepl_widgets.append(context_desc_label)
             next_row += 1
+            
+            # Ẩn/hiện widgets dựa vào service hiện tại
+            self.toggle_deepl_widgets()
         
         translation_frame.columnconfigure(1, weight=1)
     
@@ -1851,12 +1874,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
         self.use_deepl = (service == "deepl")
         self.save_config()
         
+        # Toggle DeepL widgets visibility
+        self.toggle_deepl_widgets()
+        
         if self.use_deepl:
             if not self.DEEPL_API_AVAILABLE:
                 messagebox.showerror("Lỗi", "DeepL API không khả dụng. Vui lòng cài đặt: pip install deepl")
                 self.translation_service_var.set("google")
                 self.use_deepl = False
                 self.save_config()
+                self.toggle_deepl_widgets()
                 return
             
             # Lấy API key từ UI nếu có
@@ -1879,6 +1906,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.translation_service_var.set("google")
                 self.use_deepl = False
                 self.save_config()
+                self.toggle_deepl_widgets()
         else:
             # Chuyển về Google Translate
             if old_use_deepl:
@@ -1886,6 +1914,19 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 if hasattr(self, 'deepl_context_manager'):
                     self.deepl_context_manager.clear_context()
                 self.log("Đã chuyển sang Google Translate")
+    
+    def toggle_deepl_widgets(self):
+        """Ẩn/hiện DeepL widgets dựa vào translation service"""
+        if not hasattr(self, 'deepl_widgets'):
+            return
+        
+        # Show widgets nếu chọn DeepL, hide nếu chọn Google
+        if self.use_deepl:
+            for widget in self.deepl_widgets:
+                widget.grid()  # Show widget
+        else:
+            for widget in self.deepl_widgets:
+                widget.grid_remove()  # Hide widget (nhưng giữ nguyên grid config)
     
     def on_deepl_key_change(self, event=None):
         """Handle DeepL API key change"""
@@ -3533,7 +3574,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 combined_text = ' '.join(texts).strip()
                 if combined_text:
                     cleaned = self.clean_ocr_text(combined_text)
-                    if len(cleaned) > 2 and any(c.isalpha() for c in cleaned):
+                    # Dùng dialogue-aware validator thay vì simple length check
+                    if should_translate_text(cleaned):
                         return cleaned
             
             return ""
@@ -3825,7 +3867,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
         Yêu cầu ít nhất stable_threshold lần đọc giống nhau để giảm dịch trùng
         """
         try:
-            if not text or len(text) < 2:
+            # Dùng dialogue validator thay vì simple length check
+            if not text or not is_valid_dialogue_text(text):
                 return False
             
             # Tính similarity với text gần nhất trong history
@@ -4096,7 +4139,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     sleep_duration = current_scan_interval_sec - (now - last_cap_time)
                     slept_time = 0
                     while slept_time < sleep_duration and self.is_running:
-                        chunk = min(0.05, sleep_duration - slept_time)
+                        chunk = min(0.03, sleep_duration - slept_time)  # 0.03s balance responsive/CPU
                         time.sleep(chunk)
                         slept_time += chunk
                     if not self.is_running:
@@ -4177,7 +4220,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             except Exception:
                 pass  # Ultimate fallback - cannot log
         last_ocr_proc_time = 0
-        min_ocr_interval = 0.05  # Giảm từ 0.1 xuống 0.05 để xử lý nhanh hơn
+        min_ocr_interval = 0.03  # Giảm từ 0.05 cho máy mạnh - xử lý nhanh hơn
         similar_texts_count = 0
         prev_ocr_text = ""
         
@@ -4200,7 +4243,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     sleep_duration = adaptive_ocr_interval - (now - last_ocr_proc_time)
                     slept_time = 0
                     while slept_time < sleep_duration and self.is_running:
-                        chunk = min(0.05, sleep_duration - slept_time)
+                        chunk = min(0.03, sleep_duration - slept_time)  # Balance cho tầm trung
                         time.sleep(chunk)
                         slept_time += chunk
                     if not self.is_running:
@@ -4211,7 +4254,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 try:
                     img = self.ocr_queue.get(timeout=0.5)
                 except queue.Empty:
-                    time.sleep(0.05)
+                    time.sleep(0.03)  # Balance: không quá nhanh gây CPU spike
                     continue
                 
                 ocr_proc_start_time = time.monotonic()
@@ -4437,9 +4480,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def start_async_translation(self, text_to_translate, ocr_sequence_number):
         """Start async translation processing"""
         try:
-            if not text_to_translate or len(text_to_translate.strip()) < 2:
-                log_debug("Skipping translation - text too short or empty")
-                return  # Skip empty or too short text
+            # Dùng dialogue validator thay vì simple length check
+            if not text_to_translate or not should_translate_text(text_to_translate):
+                log_debug("Skipping translation - invalid dialogue text")
+                return  # Skip empty or invalid text
             
             self.translation_sequence_counter += 1
             translation_sequence = self.translation_sequence_counter
@@ -4939,11 +4983,33 @@ Chúc bạn sử dụng công cụ hiệu quả!
     def on_closing(self):
         """Handle window close event"""
         try:
+            # Stop capture loop first
             if self.is_capturing:
                 self.stop_translation()
             
+            # Stop all worker threads
+            if hasattr(self, 'translation_worker') and self.translation_worker:
+                try:
+                    self.translation_worker.stop()
+                    self.translation_worker = None
+                except Exception as e:
+                    log_error("Error stopping translation worker", e)
+            
+            # Clear tkinter variables to prevent threading issues
+            try:
+                # Delete all StringVar, BooleanVar, IntVar to prevent __del__ errors
+                for attr_name in dir(self):
+                    if attr_name.endswith('_var'):
+                        try:
+                            attr = getattr(self, attr_name)
+                            if hasattr(attr, '_name'):
+                                delattr(self, attr_name)
+                        except:
+                            pass
+            except Exception as e:
+                log_error("Error cleaning up tkinter variables", e)
+            
             # Giải phóng OCR engines khi đóng ứng dụng
-            # Cleanup handlers nếu có
             if self.easyocr_handler:
                 try:
                     self.easyocr_handler.cleanup()
@@ -4977,8 +5043,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
             except:
                 pass
         finally:
+            # Properly destroy window
             try:
-                self.root.destroy()
+                self.root.quit()  # Stop mainloop
+                self.root.destroy()  # Destroy window
             except Exception:
                 pass
 

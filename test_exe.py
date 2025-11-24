@@ -97,6 +97,13 @@ def test_imports():
         print("  ✓ EasyOCRHandler")
         print("  ✓ TranslationCacheManager")
         
+        # Test SQLite cache backend
+        try:
+            from handlers.sqlite_cache_backend import SQLiteCacheBackend
+            print("  ✓ SQLiteCacheBackend")
+        except ImportError as e:
+            print(f"  ✗ SQLiteCacheBackend: {e}")
+        
         # Test EasyOCRHandler với các GPU options
         if EASYOCR_AVAILABLE:
             print("\n  Testing EasyOCRHandler GPU options...")

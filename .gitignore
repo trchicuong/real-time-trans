@@ -32,6 +32,7 @@ error_log.txt
 # Translation cache
 translation_cache.txt
 translator_debug.log
+cache/
 
 # IDE
 .vscode/

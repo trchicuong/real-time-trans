@@ -42,6 +42,8 @@ a = Analysis(
         'sys',  # For sys.frozen check in handlers
         'time',  # For time operations in handlers
         'tempfile',  # For temporary directory operations in handlers and translator
+        'sqlite3',  # For SQLite cache backend (built-in Python)
+        'difflib',  # For SequenceMatcher in text deduplication (built-in Python)
         # Modules package
         'modules',
         'modules.logger',
@@ -50,11 +52,19 @@ a = Analysis(
         'modules.unified_translation_cache',
         'modules.batch_translation',
         'modules.deepl_context',
+        'modules.text_validator',
+        'modules.text_normalizer',
+        'modules.text_deduplication',
+        'modules.sentence_buffer',
+        'modules.smart_queue',
+        'modules.rate_limiter',
+        'modules.translation_continuity',
         # Handlers package
         'handlers',
         'handlers.tesseract_ocr_handler',
         'handlers.easyocr_handler',
         'handlers.cache_manager',
+        'handlers.sqlite_cache_backend',
         # EasyOCR (optional - requires PyTorch)
         'easyocr',
         # PyTorch for EasyOCR GPU support

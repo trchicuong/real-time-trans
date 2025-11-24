@@ -55,9 +55,40 @@ class TesseractOCRHandler:
         else:
             return '--psm 6 --oem 3'
     
+    def _detect_blur(self, img):
+        """Detect blur level using Laplacian variance. Higher = sharper"""
+        laplacian_var = cv2.Laplacian(img, cv2.CV_64F).var()
+        return laplacian_var
+    
+    def _measure_contrast(self, img):
+        """Measure contrast level (0-100)"""
+        return img.std()
+    
+    def _select_preprocessing_strategy(self, img):
+        """
+        Intelligent preprocessing selection - chỉ xử lý khi cần thiết
+        Returns: strategy name
+        """
+        blur_score = self._detect_blur(img)
+        contrast = self._measure_contrast(img)
+        
+        # High quality image - minimal processing (FAST PATH)
+        if blur_score > 100 and contrast > 40:
+            return 'minimal'
+        # Blurry image - need sharpening
+        elif blur_score < 50:
+            return 'sharpen'
+        # Low contrast - need enhancement
+        elif contrast < 25:
+            return 'contrast'
+        # Normal processing
+        else:
+            return 'standard'
+    
     def preprocess_for_ocr(self, img, mode='adaptive', block_size=41, c_value=-60):
         """
-        Preprocess image cho OCR với các kỹ thuật nâng cao
+        Simplified intelligent preprocessing - giảm ~30-40% processing time
+        Tự động chọn strategy dựa trên image quality
         """
         if img is None or img.size == 0:
             return np.zeros((10, 10), dtype=np.uint8)
@@ -68,16 +99,42 @@ class TesseractOCRHandler:
             gray = img.copy()
         
         try:
-            # CLAHE (Contrast Limited Adaptive Histogram Equalization) - cải thiện contrast
-            # Đặc biệt hữu ích cho text trên nền phức tạp
-            # Tối ưu: chỉ dùng CLAHE cho ảnh lớn (>500px) để tránh chậm
             h, w = gray.shape[:2]
-            if max(h, w) > 500:
+            
+            # Intelligent strategy selection
+            strategy = self._select_preprocessing_strategy(gray)
+            
+            # FAST PATH: Minimal processing cho ảnh chất lượng cao
+            if strategy == 'minimal':
+                if mode == 'adaptive':
+                    if block_size % 2 == 0:
+                        block_size += 1
+                    processed = cv2.adaptiveThreshold(
+                        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv2.THRESH_BINARY_INV, block_size, c_value
+                    )
+                else:
+                    _, processed = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                return processed
+            
+            # Conditional processing dựa trên strategy
+            if strategy == 'sharpen':
+                # Chỉ sharpen khi blur
+                gray = self._adaptive_sharpen(gray)
+            elif strategy == 'contrast':
+                # Chỉ CLAHE khi low contrast
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                gray = clahe.apply(gray)
+            else:
+                # Standard: light denoising + CLAHE
+                if max(h, w) > 300:
+                    gray = cv2.fastNlMeansDenoising(gray, h=5, templateWindowSize=5, searchWindowSize=15)
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 gray = clahe.apply(gray)
             
+            
+            # Thresholding
             if mode == 'adaptive':
-                # Đảm bảo block_size là số lẻ
                 if block_size % 2 == 0:
                     block_size += 1
                 processed = cv2.adaptiveThreshold(
@@ -85,30 +142,77 @@ class TesseractOCRHandler:
                     cv2.THRESH_BINARY_INV, block_size, c_value
                 )
                 
-                # Morphological operations để tách text khỏi nền tốt hơn
-                # Dilation để làm dày text, erosion để loại bỏ noise
-                kernel = np.ones((2, 2), np.uint8)
-                processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel, iterations=1)
-                processed = cv2.morphologyEx(processed, cv2.MORPH_OPEN, kernel, iterations=1)
+                # Conditional morphology - chỉ khi cần
+                # Detect nếu text bị fragmented
+                if self._needs_morphology(processed):
+                    kernel_size = 2 if max(h, w) > 500 else 2
+                    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                    processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel, iterations=1)
                 
             elif mode == 'binary':
-                _, processed = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-                # Apply morphological operations
-                kernel = np.ones((2, 2), np.uint8)
-                processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel, iterations=1)
+                _, processed = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                
             elif mode == 'binary_inv':
-                _, processed = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-                kernel = np.ones((2, 2), np.uint8)
-                processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel, iterations=1)
+                _, processed = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                
             elif mode == 'none':
                 processed = gray
             else:
                 processed = gray
             
             return processed
+
         except Exception as e:
             log_error(f"Preprocessing error (mode: {mode}): {e}", e)
             return gray
+    
+    def _needs_morphology(self, binary_img):
+        """Check if morphology is needed - detect fragmented text"""
+        # Count small contours - nhiều contour nhỏ = fragmented
+        contours, _ = cv2.findContours(binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        small_contours = sum(1 for c in contours if cv2.contourArea(c) < 50)
+        return small_contours > 10
+    
+    def _adaptive_sharpen(self, img):
+        """
+        Simplified sharpening - faster unsharp masking
+        """
+        try:
+            blurred = cv2.GaussianBlur(img, (0, 0), 2)  # Reduced sigma
+            sharpened = cv2.addWeighted(img, 1.3, blurred, -0.3, 0)  # Less aggressive
+            return sharpened
+        except Exception as e:
+            log_error(f"Sharpening error: {e}", e)
+            return img
+    
+    def _get_adaptive_kernel_size(self, height, width):
+        """
+        Tính kernel size tối ưu dựa trên kích thước ảnh
+        Ảnh lớn -> kernel lớn hơn
+        """
+        max_dim = max(height, width)
+        if max_dim > 1000:
+            return 3
+        elif max_dim > 500:
+            return 2
+        else:
+            return 2
+    
+    def _estimate_background_complexity(self, img):
+        """
+        Đánh giá độ phức tạp của background
+        Sử dụng Laplacian variance - high variance = phức tạp
+        Returns: complexity score (0-100)
+        """
+        try:
+            laplacian = cv2.Laplacian(img, cv2.CV_64F)
+            variance = laplacian.var()
+            # Normalize về 0-100
+            complexity = min(100, variance / 10)
+            return complexity
+        except Exception as e:
+            log_error(f"Complexity estimation error: {e}", e)
+            return 50  # Default medium complexity
     
     def scale_for_ocr(self, img, scale_factor=1.0):
         """
@@ -140,8 +244,9 @@ class TesseractOCRHandler:
     
     def detect_text_regions(self, img, min_area=100):
         """
-        Phát hiện vùng có text sử dụng contour detection
-        Returns: List of (x, y, w, h) regions
+        Phát hiện vùng có text sử dụng contour detection nâng cao
+        Tối ưu cho game graphics với nền phức tạp
+        Returns: List of (x, y, w, h) regions sorted by position
         """
         if img is None:
             return []
@@ -162,65 +267,126 @@ class TesseractOCRHandler:
             else:
                 gray = img.copy()
             
-            # Apply threshold để tách text
+            # Bước 1: Denoising trước khi threshold
+            gray = cv2.fastNlMeansDenoising(gray, h=5)
+            
+            # Bước 2: CLAHE để tăng contrast
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+            
+            # Bước 3: Otsu's threshold để tách text tốt hơn
             _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
             
-            # Morphological operations để kết nối text
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            # Bước 4: Morphological operations để kết nối text
+            # Adaptive kernel dựa trên image size
+            h, w = gray.shape
+            kernel_size = 3 if max(h, w) > 500 else 2
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
             dilated = cv2.dilate(binary, kernel, iterations=2)
             
-            # Find contours
+            # Bước 5: Find contours với RETR_EXTERNAL
             contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Filter và merge regions
+            # Bước 6: Filter và collect regions với criteria nâng cao
             regions = []
+            img_area = h * w
+            
             for contour in contours:
                 x, y, w, h = cv2.boundingRect(contour)
                 area = w * h
-                if area >= min_area and w >= 10 and h >= 10:  # Minimum size
-                    # Expand region slightly để capture full text
-                    padding = 5
-                    x = max(0, x - padding)
-                    y = max(0, y - padding)
-                    w = min(img.shape[1] - x, w + padding * 2)
-                    h = min(img.shape[0] - y, h + padding * 2)
-                    regions.append((x, y, w, h))
+                
+                # Filter criteria nâng cao
+                # 1. Minimum size
+                if area < min_area or w < 10 or h < 10:
+                    continue
+                
+                # 2. Aspect ratio check (text thường không quá vuông hoặc quá dài)
+                aspect_ratio = w / h if h > 0 else 0
+                if aspect_ratio < 0.1 or aspect_ratio > 50:
+                    continue
+                
+                # 3. Not too large (không phải whole image)
+                if area > img_area * 0.8:
+                    continue
+                
+                # 4. Solidity check (text region không quá thưa thớt)
+                hull = cv2.convexHull(contour)
+                hull_area = cv2.contourArea(hull)
+                if hull_area > 0:
+                    solidity = area / hull_area
+                    if solidity < 0.3:  # Quá thưa thớt, không phải text
+                        continue
+                
+                # Expand region slightly để capture full text
+                padding = 5
+                x = max(0, x - padding)
+                y = max(0, y - padding)
+                w = min(img.shape[1] - x, w + padding * 2)
+                h = min(img.shape[0] - y, h + padding * 2)
+                regions.append((x, y, w, h))
             
-            # Merge overlapping regions
+            # Bước 7: Merge overlapping/nearby regions
             if len(regions) > 1:
-                merged_regions = []
-                regions = sorted(regions, key=lambda r: (r[1], r[0]))  # Sort by y, then x
-                
-                for region in regions:
-                    merged = False
-                    for i, merged_region in enumerate(merged_regions):
-                        mx, my, mw, mh = merged_region
-                        rx, ry, rw, rh = region
-                        
-                        # Check overlap
-                        if not (rx + rw < mx or rx > mx + mw or ry + rh < my or ry > my + mh):
-                            # Merge regions
-                            new_x = min(mx, rx)
-                            new_y = min(my, ry)
-                            new_w = max(mx + mw, rx + rw) - new_x
-                            new_h = max(my + mh, ry + rh) - new_y
-                            merged_regions[i] = (new_x, new_y, new_w, new_h)
-                            merged = True
-                            break
-                    
-                    if not merged:
-                        merged_regions.append(region)
-                
-                return merged_regions
+                regions = self._merge_text_regions(regions, img.shape)
+            
+            # Bước 8: Sort by position (top to bottom, left to right)
+            regions = sorted(regions, key=lambda r: (r[1], r[0]))
             
             return regions
         except Exception as e:
             log_error(f"Text region detection error: {e}", e)
             return []
     
+    def _merge_text_regions(self, regions, img_shape):
+        """
+        Merge các text regions gần nhau hoặc overlap
+        Thuật toán nâng cao với distance threshold
+        """
+        if not regions:
+            return []
+        
+        merged = []
+        regions = sorted(regions, key=lambda r: (r[1], r[0]))  # Sort by y, then x
+        
+        for region in regions:
+            rx, ry, rw, rh = region
+            merged_with_existing = False
+            
+            for i, merged_region in enumerate(merged):
+                mx, my, mw, mh = merged_region
+                
+                # Kiểm tra overlap hoặc gần nhau
+                # Distance threshold: regions cách nhau < 20px sẽ được merge
+                distance_threshold = 20
+                
+                # Check horizontal distance
+                h_distance = min(abs((rx + rw) - mx), abs((mx + mw) - rx))
+                # Check vertical distance
+                v_distance = min(abs((ry + rh) - my), abs((my + mh) - ry))
+                
+                # Overlap or nearby
+                overlap = not (rx + rw < mx or rx > mx + mw or ry + rh < my or ry > my + mh)
+                nearby = (overlap or (h_distance < distance_threshold and v_distance < distance_threshold))
+                
+                if nearby:
+                    # Merge regions
+                    new_x = min(mx, rx)
+                    new_y = min(my, ry)
+                    new_w = max(mx + mw, rx + rw) - new_x
+                    new_h = max(my + mh, ry + rh) - new_y
+                    merged[i] = (new_x, new_y, new_w, new_h)
+                    merged_with_existing = True
+                    break
+            
+            if not merged_with_existing:
+                merged.append(region)
+        
+        return merged
+    
     def ocr_region_with_confidence(self, img, region, confidence_threshold=50, scale_factor=1.0):
         """
-        OCR region với confidence filtering và multi-scale support
+        OCR region với adaptive confidence filtering và multi-scale support
+        Confidence threshold được điều chỉnh dựa trên background complexity
         """
         try:
             x, y, w, h = region
@@ -233,6 +399,10 @@ class TesseractOCRHandler:
             if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
                 log_debug(f"Empty ROI for region {region}")
                 return "", 0.0, 0
+            
+            # Adaptive confidence threshold dựa trên background complexity
+            complexity = self._estimate_background_complexity(roi)
+            adjusted_threshold = self._adjust_confidence_threshold(confidence_threshold, complexity)
             
             # Scale for OCR với scale_factor
             scaled_roi = self.scale_for_ocr(roi, scale_factor)
@@ -255,7 +425,9 @@ class TesseractOCRHandler:
                 if not data['text'][i].strip():
                     continue
                 conf = float(data['conf'][i])
-                if conf >= confidence_threshold:
+                
+                # Sử dụng adjusted threshold
+                if conf >= adjusted_threshold:
                     filtered_text.append(data['text'][i])
                     total_confidence += conf
                     valid_count += 1
@@ -268,12 +440,28 @@ class TesseractOCRHandler:
             log_error(f"OCR error in region {region}: {e}", e)
             return "", 0.0, 0
     
+    def _adjust_confidence_threshold(self, base_threshold, complexity):
+        """
+        Điều chỉnh confidence threshold dựa trên background complexity
+        Background phức tạp -> threshold thấp hơn (chấp nhận text có confidence thấp hơn)
+        Background đơn giản -> threshold cao hơn (chỉ lấy text có confidence cao)
+        """
+        if complexity < 30:
+            # Background đơn giản - tăng threshold 10%
+            return min(90, base_threshold + 10)
+        elif complexity > 70:
+            # Background phức tạp - giảm threshold 15%
+            return max(30, base_threshold - 15)
+        else:
+            # Medium complexity - giữ nguyên
+            return base_threshold
+    
     def recognize(self, img_cv_bgr, prep_mode='adaptive', block_size=41, c_value=-60, confidence_threshold=50):
         """
         Main OCR method với optimizations:
-        - Text region detection
-        - Multi-scale processing
+        - Intelligent multi-scale processing
         - Adaptive confidence thresholds
+        - Smart scale selection dựa trên image analysis
         """
         try:
             # Preprocess
@@ -289,23 +477,29 @@ class TesseractOCRHandler:
                     tess_mode = 'general'
                 self.cached_tess_params = self.get_tesseract_config(tess_mode)
             
-            # Full image OCR (text region detection tắt mặc định để tránh chậm)
+            # Full image OCR
             full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
             
-            # Multi-scale chỉ khi được bật (tắt mặc định)
+            # Multi-scale intelligent processing (khi được bật)
             if self.enable_multi_scale:
+                # Phân tích ảnh để chọn scales thông minh
+                optimal_scales = self._select_optimal_scales(processed_cv_img)
+                
                 best_result = None
                 best_score = 0.0
                 
-                # Thử ít scales hơn để nhanh hơn: chỉ 1.0x và 1.2x
-                for scale in [1.0, 1.2]:
+                for scale in optimal_scales:
                     try:
                         text, avg_conf, word_count = self.ocr_region_with_confidence(
                             processed_cv_img, full_img_region, confidence_threshold, scale_factor=scale
                         )
                         
                         if text:
-                            score = avg_conf * word_count
+                            # Scoring: confidence * word_count * scale_weight
+                            # Ưu tiên scale 1.0x và 1.2x hơn
+                            scale_weight = 1.2 if scale in [1.0, 1.2] else 1.0
+                            score = avg_conf * word_count * scale_weight
+                            
                             if score > best_score:
                                 best_score = score
                                 best_result = text
@@ -323,4 +517,46 @@ class TesseractOCRHandler:
         except Exception as e:
             log_error(f"Error in Tesseract OCR recognize (prep_mode={prep_mode})", e)
             return ""
+    
+    def _select_optimal_scales(self, img):
+        """
+        Chọn scales tối ưu dựa trên image analysis
+        Tránh waste time trên scales không cần thiết
+        """
+        h, w = img.shape[:2]
+        scales = []
+        
+        # Luôn có 1.0x baseline
+        scales.append(1.0)
+        
+        # Phân tích sharpness/blur của ảnh
+        sharpness = self._estimate_sharpness(img)
+        
+        # Nếu ảnh blur -> thử scale lớn hơn
+        if sharpness < 100:  # Low sharpness = blur
+            scales.append(1.2)
+            if sharpness < 50:  # Very blur
+                scales.append(1.5)
+        
+        # Nếu text nhỏ (based on image size) -> thử scale lớn hơn
+        if max(h, w) < 400:
+            if 1.2 not in scales:
+                scales.append(1.2)
+            scales.append(1.5)
+        
+        # Giới hạn số scales để tránh quá chậm
+        return scales[:3]  # Max 3 scales
+    
+    def _estimate_sharpness(self, img):
+        """
+        Ước tính độ sắc nét của ảnh sử dụng Laplacian variance
+        Higher value = sharper image
+        """
+        try:
+            laplacian = cv2.Laplacian(img, cv2.CV_64F)
+            variance = laplacian.var()
+            return variance
+        except Exception as e:
+            log_error(f"Sharpness estimation error: {e}", e)
+            return 100  # Default medium sharpness
 

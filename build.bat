@@ -32,5 +32,16 @@ if "%build_type%"=="2" (
 echo.
 echo Build complete! Check the 'dist' folder for the executable.
 echo.
+echo Copying essential files...
+if exist "dist\RealTimeScreenTranslator\" (
+    echo Copying preset_cache.txt...
+    copy /Y preset_cache.txt "dist\RealTimeScreenTranslator\" >nul 2>&1
+    echo Copying HUONG_DAN.txt...
+    copy /Y HUONG_DAN.txt "dist\RealTimeScreenTranslator\" >nul 2>&1
+    echo Copying LICENSE...
+    copy /Y LICENSE "dist\RealTimeScreenTranslator\" >nul 2>&1
+    echo Essential files copied!
+)
+echo.
 echo If the exe doesn't work, try the DEBUG version to see error messages.
 pause

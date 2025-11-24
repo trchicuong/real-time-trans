@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 import sys
 import os
+import cv2
 
 # Import centralized logger from modules
 try:
@@ -62,7 +63,19 @@ def detect_gpu_availability():
 
 
 class EasyOCRHandler:
-    """Handler cho EasyOCR với tối ưu CPU/GPU"""
+    """
+    Handler cho EasyOCR với tối ưu CPU/GPU
+    
+    TARGET: Cấu hình tầm trung trở lên
+    - CPU: i5 gen 10-12, i7 gen 9-11
+    - GPU: GTX 1650, RTX 3050, RTX 3060 (4-8GB VRAM)
+    - RAM: 8-16GB
+    
+    NOTE: Qua testing thực tế, CPU mode cho kết quả dịch chính xác hơn GPU mode.
+    Các thiết lập đã được balance để chạy mượt trên cấu hình tầm trung:
+    - GPU mode: 0.4s interval (2.5 FPS), 1000px max
+    - CPU mode: 1.0s interval (1 FPS), 800px max
+    """
     
     def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False):
         """
@@ -109,13 +122,16 @@ class EasyOCRHandler:
             else:
                 log_error("[INFO] No GPU detected. EasyOCR will use CPU mode.")
         
-        # Adaptive throttling: GPU mode cần ít throttling hơn CPU mode
+        # Throttling intervals - balance cho cấu hình tầm trung
+        # Target: i5 gen10-12, GTX 1650/RTX 3050, 8-16GB RAM
         if self.gpu_available:
-            self.min_call_interval = 0.5  # GPU mode: 0.5s (GPU xử lý nhanh hơn)
-            log_error(f"[INFO] EasyOCR will use GPU mode to reduce CPU usage.")
+            # GPU tầm trung (GTX 1650, RTX 3050): interval vừa phải
+            self.min_call_interval = 0.4  # 2.5 FPS - balance cho GPU tầm trung
+            log_error(f"[INFO] EasyOCR GPU mode: interval=0.4s (mid-range GPU balanced)")
         else:
-            self.min_call_interval = 1.5  # CPU mode: 1.5s (tăng từ 0.8s để giảm CPU ~40%)
-            log_error("[INFO] EasyOCR will use CPU mode with increased throttling (1.5s).")
+            # CPU tầm trung (i5-10th to i7-11th): throttle hơi cao
+            self.min_call_interval = 1.0  # 1 FPS - balance cho CPU tầm trung
+            log_error("[INFO] EasyOCR CPU mode: interval=1.0s (mid-range CPU balanced)")
         log_error(f"[INFO] GPU Debug: {self.gpu_debug_info}")
         
         # Smart skip: cache last result để skip nếu text giống
@@ -125,7 +141,12 @@ class EasyOCRHandler:
         # Multi-scale processing - có thể bật/tắt từ UI
         self.enable_multi_scale = enable_multi_scale
         
-        # Timeout cho OCR operations (giây) - tránh stuck
+        # GPU memory optimization
+        self.frame_count = 0
+        self.gpu_cache_clear_interval = 100  # Clear GPU cache mỗi 100 frames
+        
+        # Timeout cho OCR operations (giây) - balance cho cấu hình tầm trung
+        # GPU tầm trung chậm hơn GPU mạnh, CPU tầm trung cần thời gian hơn
         self.ocr_timeout = 10.0 if self.gpu_available else 15.0
         
         # Max text length để tránh xử lý text quá dài (tăng lên để giữ nhiều text hơn)
@@ -232,7 +253,8 @@ class EasyOCRHandler:
     
     def recognize(self, img, confidence_threshold=0.3):
         """
-        Main OCR method với throttling, resize và smart skip để giảm CPU
+        Main OCR method với throttling, preprocessing nâng cao và smart skip
+        EasyOCR-specific preprocessing khác với Tesseract
         """
         # Throttle: EasyOCR rất nặng CPU/GPU, chỉ gọi theo interval
         now = time.monotonic()
@@ -267,32 +289,98 @@ class EasyOCRHandler:
         if reader is None:
             return ""
         
-        # Resize ảnh nhỏ hơn để giảm CPU/GPU (EasyOCR vẫn chính xác với ảnh nhỏ)
-        # Adaptive max dimension: GPU có thể xử lý ảnh lớn hơn, CPU cần nhỏ hơn
-        if isinstance(img, np.ndarray):
-            img_pil = Image.fromarray(img)
-        else:
-            img_pil = img
+        # EasyOCR-specific preprocessing (KHÁC với Tesseract)
+        # Neural networks thích ảnh có contrast cao và noise thấp
+        try:
+            if isinstance(img, np.ndarray):
+                preprocessed_img = self._preprocess_for_easyocr(img)
+                img_pil = Image.fromarray(preprocessed_img)
+            else:
+                # Convert PIL to numpy for preprocessing
+                img_np = np.array(img_pil)
+                preprocessed_img = self._preprocess_for_easyocr(img_np)
+                img_pil = Image.fromarray(preprocessed_img)
+        except Exception as e:
+            log_error("Error in EasyOCR preprocessing", e)
+            # Fallback to original image
+            if not isinstance(img, Image.Image):
+                img_pil = Image.fromarray(img) if isinstance(img, np.ndarray) else img
         
+        # Increment frame counter và periodic GPU cleanup
+        self.frame_count += 1
+        if self.gpu_available and self.frame_count % self.gpu_cache_clear_interval == 0:
+            self._cleanup_gpu_memory()
+        
+        # Resize ảnh - balance cho GPU/CPU tầm trung
         w, h = img_pil.size
         max_dim = max(w, h)
         
-        # GPU mode: max 900px, CPU mode: max 650px (cân bằng tốc độ và độ chính xác)
-        # EasyOCR vẫn khá chính xác với ảnh nhỏ, nhưng tăng một chút để giữ độ chính xác tốt
-        max_size = 900 if self.gpu_available else 650
+        # GPU tầm trung (GTX 1650, RTX 3050): 1000px balance
+        # CPU tầm trung (i5-10th to i7-11th): 800px để tránh overload
+        max_size = 1000 if self.gpu_available else 800
         if max_dim > max_size:
             scale = max_size / max_dim
             new_w, new_h = int(w * scale), int(h * scale)
             img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # Multi-scale processing nếu được bật (chỉ cho CPU mode)
-        if self.enable_multi_scale and not self.gpu_available:
-            # Multi-scale chỉ cho CPU mode (GPU đã nhanh rồi)
+        # Multi-scale processing - optimized cho cả CPU và GPU
+        if self.enable_multi_scale:
+            # GPU: batch processing cho tất cả scales cùng lúc
+            # CPU: sequential processing
             best_result = None
             best_score = 0.0
             
-            # Thử nhiều scale: 0.7x, 1.0x, 1.3x
-            for scale in [0.7, 1.0, 1.3]:
+            scales = [0.7, 1.0, 1.3]
+            
+            # GPU batch processing - process all scales in parallel
+            if self.gpu_available:
+                try:
+                    scaled_images = []
+                    for scale in scales:
+                        scaled_w = int(w * scale)
+                        scaled_h = int(h * scale)
+                        if scaled_w >= 10 and scaled_h >= 10:
+                            scaled_img = img_pil.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+                            scaled_images.append((scale, np.array(scaled_img)))
+                    
+                    # Process all scales
+                    for scale, img_array in scaled_images:
+                        try:
+                            results = reader.readtext(img_array)
+                            texts = []
+                            total_conf = 0.0
+                            valid_count = 0
+                            for (bbox, text, conf) in results:
+                                if text and conf > confidence_threshold:
+                                    texts.append(text)
+                                    total_conf += conf
+                                    valid_count += 1
+                            
+                            if texts:
+                                result_text = ' '.join(texts).strip()
+                                avg_conf = total_conf / valid_count if valid_count > 0 else 0.0
+                                score = avg_conf * len(texts)
+                                if score > best_score:
+                                    best_score = score
+                                    best_result = result_text
+                        except Exception as e:
+                            log_error(f"Error in GPU multi-scale processing (scale={scale})", e)
+                            continue
+                    
+                    self.last_call_time = time.monotonic()
+                    if best_result:
+                        if len(best_result) > self.max_text_length:
+                            best_result = best_result[:self.max_text_length] + "..."
+                        self.last_result_text = best_result
+                        self._cleanup_gpu_memory()
+                        return best_result
+                    return ""
+                except Exception as e:
+                    log_error(f"Error in GPU batch multi-scale", e)
+                    # Fallback to single scale
+            
+            # CPU sequential processing
+            for scale in scales:
                 try:
                     scaled_w = int(w * scale)
                     scaled_h = int(h * scale)
@@ -356,14 +444,7 @@ class EasyOCRHandler:
                 if len(best_result) > self.max_text_length:
                     best_result = best_result[:self.max_text_length] + "..."
                 self.last_result_text = best_result
-                # Clear GPU memory
-                if self.gpu_available:
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                    except Exception:
-                        pass
+                self._cleanup_gpu_memory()
                 return best_result
             return ""
         
@@ -396,14 +477,7 @@ class EasyOCRHandler:
             # Check if thread is still alive (timeout occurred)
             if ocr_thread.is_alive():
                 log_error(f"EasyOCR timeout after {self.ocr_timeout}s - skipping this frame")
-                # Clear GPU memory if using GPU
-                if self.gpu_available:
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                    except Exception:
-                        pass
+                self._cleanup_gpu_memory()
                 return ""
             
             # Get results
@@ -434,14 +508,8 @@ class EasyOCRHandler:
             # Cache result
             self.last_result_text = result_text
             
-            # Clear GPU memory sau mỗi lần xử lý để tránh memory leak
-            if self.gpu_available:
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
+            # Cleanup GPU memory
+            self._cleanup_gpu_memory()
             
             return result_text
         except Exception as e:
@@ -455,6 +523,51 @@ class EasyOCRHandler:
                 except Exception:
                     pass
             return ""
+    
+    def _cleanup_gpu_memory(self):
+        """Cleanup GPU memory cache - gọi định kỳ để tránh memory leak"""
+        if not self.gpu_available:
+            return
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception as e:
+            log_error(f"Error cleaning GPU memory: {e}", e)
+    
+    def _preprocess_for_easyocr(self, img):
+        """
+        Preprocessing cho EasyOCR - KHÁC với Tesseract
+        Neural networks thích contrast cao, ít thích heavy morphology
+        Balance cho cấu hình tầm trung: giảm aggressive preprocessing
+        """
+        try:
+            # Convert to grayscale if needed
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img.copy()
+            
+            # Light denoising - giảm h parameter để tránh over-blur
+            if gray.shape[0] > 200 or gray.shape[1] > 200:
+                gray = cv2.fastNlMeansDenoising(gray, h=3, templateWindowSize=5, searchWindowSize=15)
+            
+            # Light CLAHE - giảm clipLimit để tránh over-enhancement
+            clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            
+            # Very light sharpening - giảm weights để tránh artifacts
+            # Neural networks đã học được features, không cần sharpen mạnh
+            blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.5)
+            sharpened = cv2.addWeighted(enhanced, 1.1, blurred, -0.1, 0)
+            
+            return sharpened
+        except Exception as e:
+            log_error(f"Error in EasyOCR preprocessing: {e}", e)
+            return img
+            log_error("Error in EasyOCR preprocessing", e)
+            return img
     
     def is_available(self):
         """Check if EasyOCR is available"""

@@ -5,6 +5,7 @@ import threading
 import time
 import hashlib
 from .logger import log_debug, log_error
+from .text_normalizer import normalize_for_cache
 
 class UnifiedTranslationCache:
     """
@@ -37,6 +38,7 @@ class UnifiedTranslationCache:
     def _generate_cache_key(self, text, source_lang, target_lang, provider, **kwargs):
         """
         Generate a unique cache key for the translation request.
+        Chuẩn hóa text để tăng cache hit rate.
         
         Args:
             text: Source text to translate
@@ -49,8 +51,15 @@ class UnifiedTranslationCache:
             Tuple cache key: (text_hash, source_lang, target_lang, provider, params_hash)
         """
         try:
-            # Create deterministic hash of text to handle large inputs efficiently
-            text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+            # Chuẩn hóa text trước khi hash để tăng cache hit rate
+            normalized_text = normalize_for_cache(text, preserve_case=False)
+            
+            # Nếu normalize thất bại, dùng text gốc
+            if not normalized_text:
+                normalized_text = str(text).strip().lower()
+            
+            # Create deterministic hash of normalized text
+            text_hash = hashlib.md5(normalized_text.encode('utf-8')).hexdigest()
             
             # Include provider-specific parameters in the key
             params_str = ""
@@ -67,7 +76,7 @@ class UnifiedTranslationCache:
             return (text_hash, source_lang.lower(), target_lang.lower(), provider.lower(), params_hash)
         except Exception as e:
             log_error("Error generating cache key", e)
-            # Fallback: use simple hash without params
+            # Fallback: use simple hash without normalization
             try:
                 text_hash = hashlib.md5(str(text).encode('utf-8', errors='replace')).hexdigest()
                 return (text_hash, str(source_lang).lower(), str(target_lang).lower(), str(provider).lower(), "")

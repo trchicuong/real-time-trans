@@ -1,13 +1,48 @@
 """
-OCR Post-processing utilities
-Improves OCR accuracy by fixing common OCR errors
+OCR Post-processing utilities - Nâng cao cho game graphics
+Improves OCR accuracy by fixing common OCR errors với game-specific fixes
 """
 import re
+import unicodedata
 from .logger import log_debug, log_error
+
+# Game-specific character substitutions (common OCR mistakes trong game text)
+GAME_OCR_FIXES = {
+    # I/l/1/| confusions
+    '|': 'I',  # Pipe to I (common mistake)
+    'l\'': 'I\'',  # lowercase L + apostrophe usually is I
+    
+    # O/0 confusions
+    'O0': '00',  # O zero to double zero
+    '0O': '00',
+    
+    # Common word fixes
+    'lf': 'If',
+    'Lf': 'If',
+    'ln': 'In',
+    'Ln': 'In',
+    'l ': 'I ',  # Standalone l is usually I
+    ' l ': ' I ',
+    
+    # Quotes - preserve apostrophes for contractions like I'm, don't
+    '`': "'",
+    '´': "'",
+    '"': '"',
+    '"': '"',
+    ''': "'",
+    ''': "'",
+}
+
+# Dialogue-specific patterns to preserve
+DIALOGUE_PATTERNS = {
+    'stutter': re.compile(r'\b(\w+)[-\s]+\1\b', re.IGNORECASE),  # oh-oh, i'm-i'm
+    'hyphenated': re.compile(r'\b\w{2,}-\w{2,}\b', re.IGNORECASE),  # well-well, uh-huh
+}
 
 def post_process_ocr_text_general(text, lang='auto'):
     """
     Post-process OCR text to fix common OCR errors
+    Nâng cấp với game-specific character mapping
     
     Args:
         text: Raw OCR text
@@ -28,12 +63,24 @@ def post_process_ocr_text_general(text, lang='auto'):
         
         cleaned = text.strip()
         
-        # Common Unicode OCR errors
+        # Bước 1: Apply game-specific fixes
+        for error, correction in GAME_OCR_FIXES.items():
+            cleaned = cleaned.replace(error, correction)
+        
+        # Bước 2: Context-aware fixes
+        # Fix "l" at sentence start -> "I"
+        cleaned = re.sub(r'^l\s', 'I ', cleaned)
+        cleaned = re.sub(r'\.\s+l\s', '. I ', cleaned)
+        cleaned = re.sub(r'!\s+l\s', '! I ', cleaned)
+        cleaned = re.sub(r'\?\s+l\s', '? I ', cleaned)
+        
+        # Bước 3: Common Unicode OCR errors
         ocr_errors = {
             '\u201E': '"',  # Double low-9 quotation mark
             '\u2019': "'",  # Right single quotation mark
             '\u2014': '-',  # Em dash
             '\u2013': '-',  # En dash
+            '\u2026': '...',  # Horizontal ellipsis
         }
         
         # Language-specific fixes
@@ -41,27 +88,36 @@ def post_process_ocr_text_general(text, lang='auto'):
             if lang.startswith('fra') or lang.startswith('fr'):
                 cleaned = cleaned.replace('||', 'Il')
             
-            # English-specific OCR fixes
+            # English-specific OCR fixes (nâng cao)
             if lang.startswith('eng') or lang.startswith('en'):
-                # Special case for | character (commonly at start of sentences)
-                cleaned = re.sub(r'^\|\s', 'I ', cleaned)  # | at start followed by space
-                cleaned = re.sub(r'\s\|\s', ' I ', cleaned)  # | surrounded by spaces
-                
-                # Other fixes using word boundaries
+                # Word boundary fixes
                 english_ocr_fixes = {
                     '{': '(', '}': ')', '\\/': 'V',
+                    'vvhen': 'when', 'Vvhen': 'When',
+                    'vvhat': 'what', 'Vvhat': 'What',
+                    'vvith': 'with', 'Vvith': 'With',
                 }
                 for error, correction in english_ocr_fixes.items():
-                    cleaned = re.sub(r'\b' + re.escape(error) + r'\b', correction, cleaned)
+                    cleaned = re.sub(r'\b' + re.escape(error) + r'\b', correction, cleaned, flags=re.IGNORECASE)
         
         # Apply Unicode fixes
         for error, correction in ocr_errors.items():
             cleaned = cleaned.replace(error, correction)
         
-        # Preserve newlines, only collapse multiple spaces/tabs
+        # Bước 4: Sentence reconstruction
+        # Fix broken sentences (missing space after punctuation)
+        cleaned = re.sub(r'([.!?])([A-Z])', r'\1 \2', cleaned)
+        
+        # Bước 5: Preserve newlines, only collapse multiple spaces/tabs
         cleaned = re.sub(r'[ \t]+', ' ', cleaned)
         
-        return cleaned
+        # Bước 6: Fix common punctuation issues
+        # Remove space before punctuation
+        cleaned = re.sub(r'\s+([,.!?;:])', r'\1', cleaned)
+        # Add space after punctuation if missing
+        cleaned = re.sub(r'([,.!?;:])([A-Za-z])', r'\1 \2', cleaned)
+        
+        return cleaned.strip()
     except Exception as e:
         log_error("Error in post_process_ocr_text_general", e)
         # Return original text on error
@@ -109,6 +165,7 @@ def remove_text_after_last_punctuation_mark(text):
 def post_process_ocr_for_game_subtitle(text):
     """
     Post-process OCR text specifically for game subtitles
+    Nâng cấp với comprehensive game dialogue fixes
     
     Args:
         text: Raw OCR text from game subtitle
@@ -128,26 +185,69 @@ def post_process_ocr_for_game_subtitle(text):
         
         cleaned = text.strip()
         
-        # Fix character names (capitalize properly)
-        name_match = re.search(r'^([A-Za-z\s]+):', cleaned)
+        # Bước 1: Apply general fixes first
+        cleaned = post_process_ocr_text_general(cleaned, lang='eng')
+        
+        # Bước 2: Character name detection và formatting
+        # Detect pattern: NAME: dialogue
+        name_match = re.search(r'^([A-Za-z][A-Za-z\s\-\']{0,30}):\s*(.+)', cleaned)
         if name_match:
             character_name = name_match.group(1).strip()
+            dialogue = name_match.group(2).strip()
+            
+            # Capitalize character name properly
             character_name = ' '.join(word.capitalize() for word in character_name.split())
-            cleaned = cleaned.replace(name_match.group(0), f"{character_name}:")
+            
+            # Fix common character name OCR errors
+            char_name_fixes = {
+                'Joh N': 'John',
+                'Mary ': 'Mary',
+                'Lara ': 'Lara',
+                # Có thể thêm nhiều fixes dựa trên game cụ thể
+            }
+            for error, fix in char_name_fixes.items():
+                if character_name.startswith(error):
+                    character_name = fix
+            
+            cleaned = f"{character_name}: {dialogue}"
         
-        # Fix spacing after character name (John:Text -> John: Text)
-        cleaned = re.sub(r'(\w+:)(\w)', r'\1 \2', cleaned)
+        # Bước 3: Dialogue-specific fixes
+        # Remove action descriptions [brackets] or (parentheses) thường là OCR noise
+        cleaned = re.sub(r'\[[^\]]{1,3}\]', '', cleaned)  # Remove short bracketed text
+        cleaned = re.sub(r'\([^\)]{1,3}\)', '', cleaned)  # Remove short parenthesized text
         
-        # Remove noise characters at start/end
-        cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}', '', cleaned)
-        cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'\"]{1,5}$', '', cleaned)
+        # Bước 4: Fix ellipsis patterns
+        cleaned = re.sub(r'\.{2,}', '...', cleaned)  # Normalize ellipsis
+        cleaned = cleaned.replace('…', '...')
         
-        # Normalize quotes
-        cleaned = cleaned.replace('"', '"').replace('"', '"')
-        cleaned = cleaned.replace(''', "'").replace(''', "'")
+        # Bước 5: Quote handling
+        # Ensure quotes are balanced
+        quote_count = cleaned.count('"')
+        if quote_count % 2 != 0:  # Odd number of quotes
+            # Try to fix by removing trailing quote if at end
+            if cleaned.endswith('"'):
+                cleaned = cleaned[:-1]
         
-        # Clean up multiple spaces
+        # Bước 6: Remove noise characters at boundaries
+        # More aggressive than general function
+        cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}', '', cleaned)
+        cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}$', '', cleaned)
+        
+        # Bước 7: Clean up whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned)
+        
+        # Bước 8: Capitalize first letter after speaker name or start
+        if ':' in cleaned:
+            parts = cleaned.split(':', 1)
+            if len(parts) == 2:
+                dialogue_part = parts[1].strip()
+                if dialogue_part and not dialogue_part[0].isupper():
+                    dialogue_part = dialogue_part[0].upper() + dialogue_part[1:]
+                cleaned = f"{parts[0]}: {dialogue_part}"
+        else:
+            # No speaker, capitalize first letter
+            if cleaned and not cleaned[0].isupper():
+                cleaned = cleaned[0].upper() + cleaned[1:]
         
         return cleaned.strip()
     except Exception as e:
