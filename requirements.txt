@@ -21,6 +21,24 @@ easyocr>=1.7.0
 deep-translator>=1.11.4
 deepl>=1.12.0
 
+# Local translation with MarianMT (GPU-accelerated neural MT)
+# Eliminates API delay (200-2000ms) → 50-200ms local translation
+transformers>=4.18.0
+torch>=1.10.0
+sentencepiece>=0.1.96
+# Note: For GPU support, also install CUDA version:
+# pip install torch --index-url https://download.pytorch.org/whl/cu130
+# Models download on first use (~300MB per language pair)
+
 # Optional: Encoding detection for cache files
 chardet>=5.0.0
+
+# Advanced image hashing for better deduplication (perceptual hash)
+imagehash>=4.3.1
+
+# Global hotkeys support
+pynput>=1.7.6
+
+# Text similarity for advanced deduplication
+# difflib is built-in, no need to install
 

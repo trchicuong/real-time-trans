@@ -33,6 +33,7 @@ error_log.txt
 translation_cache.txt
 translator_debug.log
 cache/
+marian_models_cache/
 
 # IDE
 .vscode/

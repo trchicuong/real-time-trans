@@ -68,6 +68,8 @@ from .text_validator import (
     is_too_noisy_for_translation,
     TextValidator
 )
+from .advanced_deduplication import AdvancedDeduplicator
+from .hotkey_manager import HotkeyManager
 
 __all__ = [
     'log_error',
@@ -120,5 +122,7 @@ __all__ = [
     'extract_actual_words',
     'is_too_noisy_for_translation',
     'TextValidator',
+    'AdvancedDeduplicator',
+    'HotkeyManager',
 ]
 
