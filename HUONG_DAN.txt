@@ -56,8 +56,12 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
    5. NGÔN NGỮ ĐÍCH: Chọn ngôn ngữ muốn dịch sang
    
    6. DỊCH VỤ DỊCH THUẬT:
-      - Google Translate: Miễn phí
-      - DeepL: Chất lượng tốt hơn, cần API key (https://www.deepl.com/pro-api)
+      - Google Translate: Miễn phí, nhanh
+      - DeepL: Chất lượng cao, cần API key (https://www.deepl.com/pro-api)
+      - MarianMT (local): Dịch cục bộ, NHANH NHẤT (50-200ms), không cần internet sau khi tải model lần đầu
+        * Hỗ trợ GPU tự động (NVIDIA), fallback CPU
+        * Tải model lần đầu: ~300MB, mất 1-5 phút
+        * Hỗ trợ 14 cặp ngôn ngữ: en↔vi, en↔ja, en↔ko, en↔zh, en↔de, en↔fr, en↔es
    
    7. DEEPL CONTEXT WINDOW (chỉ khi chọn DeepL):
       - Số subtitle trước đó dùng làm ngữ cảnh (0-3, mặc định: 2)
@@ -97,7 +101,10 @@ BƯỚC 5: Sử dụng màn hình dịch
    
    • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung. Nếu có NVIDIA GPU → chọn "GPU" mode
    
-   • DỊCH VỤ: Google Translate (miễn phí) hoặc DeepL (chất lượng tốt hơn, có phí). DeepL: Context Window = 2 (khuyến nghị)
+   • DỊCH VỤ: 
+     - Google Translate: Miễn phí, ổn định
+     - DeepL: Chất lượng cao (có phí), Context Window = 2 (khuyến nghị)
+     - MarianMT: NHANH NHẤT (50-200ms), dịch offline sau khi tải model, tự động dùng GPU nếu có
    
    • TỐI ƯU: Tắt hiển thị văn bản gốc, dùng font đơn giản (Arial, Helvetica), giảm độ trong suốt nếu cần
    
@@ -111,8 +118,9 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Kiểm tra ngôn ngữ nguồn đã chọn đúng
    
    • DỊCH KHÔNG HOẠT ĐỘNG:
-     - Kiểm tra kết nối internet
+     - Kiểm tra kết nối internet (không cần với MarianMT sau khi tải model)
      - Nếu dùng DeepL: Kiểm tra API key
+     - Nếu dùng MarianMT: Chờ model tải xong lần đầu (1-5 phút), xem log trong tab Trạng Thái
      - Thử chuyển sang Google Translate
    
    • DỊCH SAI:
@@ -156,8 +164,40 @@ BƯỚC 5: Sử dụng màn hình dịch
    
    TAB 3: ĐIỀU KHIỂN - Bắt đầu/Dừng dịch, khóa màn hình dịch
    
-   TAB 4: TRẠNG THÁI - Nhật ký hoạt động, lỗi, cảnh báo
+   TAB 4: PHÍM TẮT - Cấu hình phím tắt toàn cục cho các thao tác nhanh
    
-   TAB 5: HƯỚNG DẪN - Hướng dẫn sử dụng đầy đủ (tab này)
+   TAB 5: TRẠNG THÁI - Nhật ký hoạt động, lỗi, cảnh báo
+   
+   TAB 6: HƯỚNG DẪN - Hướng dẫn sử dụng đầy đủ (tab này)
+
+8. PHÍM TẮT TOÀN CỤC (HOTKEYS)
+
+Công cụ hỗ trợ phím tắt toàn cục để thao tác nhanh ngay cả khi đang chơi game/dùng ứng dụng khác.
+
+   PHÍM TẮT MẶC ĐỊNH:
+   • Ctrl+Alt+S: Bắt đầu/Dừng dịch
+   • Ctrl+Alt+P: Tạm dừng/Tiếp tục dịch
+   • Ctrl+Alt+C: Xóa lịch sử dịch
+   • Ctrl+Alt+O: Ẩn/Hiện màn hình dịch
+   • Ctrl+Alt+R: Chọn vùng chụp mới
+   • Ctrl+Alt+L: Khóa/Mở khóa màn hình dịch
+   
+   TÙY CHỈNH PHÍM TẮT (Tab "Phím Tắt"):
+   1. Tích "Bật phím tắt toàn cục" để bật/tắt
+   2. Nhập phím tắt mới vào ô tương ứng (ví dụ: <ctrl>+<shift>+t)
+   3. Nhấn Enter hoặc click ra ngoài để lưu
+   4. Nhấn "Áp Dụng" để áp dụng tất cả thay đổi
+   5. Nhấn "Khôi Phục Mặc Định" để reset về phím tắt mặc định
+   
+   QUY TẮC ĐỊNH DẠNG:
+   • Phải có ít nhất 1 phím modifier (Ctrl, Alt, Shift, Win)
+   • Định dạng: <ctrl>+<alt>+s hoặc <shift>+f1
+   • Phím modifier: <ctrl>, <alt>, <shift>, <win>
+   • Phím thường: a-z, 0-9, f1-f12
+   
+   ⚠️ LƯU Ý:
+   • Tránh dùng phím tắt trùng với game/ứng dụng
+   • Phím tắt hoạt động ngay cả khi ứng dụng không được focus
+   • Nếu phím tắt không hoạt động, thử tắt/bật lại trong tab "Phím Tắt"
 
 Chúc bạn sử dụng công cụ hiệu quả!
