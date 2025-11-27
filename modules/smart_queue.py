@@ -36,7 +36,6 @@ class SmartQueue:
         self._recent_hashes = set()  # Set of recent item hashes
         self._hash_to_data = {}  # Map hash → data (để avoid re-adding same item)
         
-        # Statistics
         self.total_puts = 0
         self.total_gets = 0
         self.duplicates_dropped = 0

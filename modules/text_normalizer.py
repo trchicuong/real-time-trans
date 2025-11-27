@@ -39,25 +39,19 @@ class TextNormalizer:
             if not text or not isinstance(text, str):
                 return ""
             
-            # 1. Loại bỏ Unicode control characters (nhưng giữ newlines quan trọng)
             normalized = ''.join(
                 char for char in text 
                 if unicodedata.category(char)[0] != 'C' or char in '\n\r\t'
             )
             
-            # 2. Loại bỏ số thứ tự ở đầu câu
             normalized = self.leading_numbers_pattern.sub('', normalized)
             
-            # 3. Loại bỏ ký tự đặc biệt game
             normalized = self.game_special_chars.sub('', normalized)
             
-            # 4. Chuẩn hóa dấu câu lặp lại (!!!, ???, ... → !, ?, .)
             normalized = self.repeated_punctuation.sub(r'\1', normalized)
             
-            # 5. Chuẩn hóa whitespace (bao gồm tabs, newlines, multiple spaces)
             normalized = self.extra_whitespace.sub(' ', normalized)
             
-            # 6. Strip leading/trailing whitespace
             normalized = normalized.strip()
             
             # 7. Lowercase nếu không preserve_case (giúp "Hello" = "hello")
@@ -90,13 +84,10 @@ class TextNormalizer:
             if not text or not isinstance(text, str):
                 return ""
             
-            # 1. Loại bỏ ký tự đặc biệt game
             normalized = self.game_special_chars.sub('', text)
             
-            # 2. Chuẩn hóa whitespace
             normalized = self.extra_whitespace.sub(' ', normalized)
             
-            # 3. Strip leading/trailing whitespace
             normalized = normalized.strip()
             
             return normalized
@@ -121,7 +112,6 @@ class TextNormalizer:
             if not text or not isinstance(text, str):
                 return ""
             
-            # 1. Lowercase
             normalized = text.lower()
             
             # 2. Normalize ellipsis và multiple punctuation
@@ -138,10 +128,8 @@ class TextNormalizer:
             normalized = re.sub(r"\s+'", " ", normalized)  # Remove leading apostrophes
             normalized = re.sub(r"'\s+", " ", normalized)  # Remove trailing apostrophes
             
-            # 5. Chuẩn hóa whitespace
             normalized = self.extra_whitespace.sub(' ', normalized)
             
-            # 6. Strip
             normalized = normalized.strip()
             
             return normalized

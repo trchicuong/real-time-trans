@@ -3,7 +3,6 @@ Modules package for real-time-trans
 Contains utility modules for logging, caching, translation, and OCR processing
 """
 
-# Import commonly used functions for convenience
 from .logger import log_error, log_debug, get_base_dir
 from .circuit_breaker import NetworkCircuitBreaker
 from .ocr_postprocessing import (

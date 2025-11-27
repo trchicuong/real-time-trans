@@ -10,7 +10,7 @@ import subprocess
 import shutil
 
 # Version number - updated with latest improvements
-VERSION = "v1.2.0"  # MarianMT local translation added
+VERSION = "v1.2.1"
 
 def get_timestamp_code():
     """Get timestamp code in HHMMSS format"""

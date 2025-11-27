@@ -1,32 +1,25 @@
-"""
-Cache Manager - quản lý translation cache
-Supports both SQLite (faster) and file-based (legacy) backends
-"""
+"""Translation Cache Manager"""
 import os
 import sys
 import shutil
 import time
 from collections import OrderedDict
 
-# Optional: chardet for encoding detection
 try:
     import chardet
     CHARDET_AVAILABLE = True
 except ImportError:
     CHARDET_AVAILABLE = False
 
-# Try to import SQLite backend
 try:
     from .sqlite_cache_backend import SQLiteCacheBackend
     SQLITE_AVAILABLE = True
 except ImportError:
     SQLITE_AVAILABLE = False
 
-# Import from modules
 try:
     from modules import get_base_dir, log_error, normalize_for_cache
 except ImportError:
-    # Fallback if modules not available
     def get_base_dir():
         try:
             if getattr(sys, 'frozen', False):
@@ -41,20 +34,16 @@ except ImportError:
         pass
     
     def normalize_for_cache(text, preserve_case=False):
-        """Fallback normalization if module not available"""
+        """Fallback normalization"""
         if not text:
             return ""
-        # Simple normalization: lowercase and strip
         normalized = str(text).strip()
         if not preserve_case:
             normalized = normalized.lower()
         return normalized
 
 def detect_file_encoding(file_path):
-    """
-    Detect encoding của file, fallback về UTF-8 nếu không detect được
-    """
-    # Thử dùng chardet nếu có
+    """Phát hiện encoding của file"""
     if CHARDET_AVAILABLE:
         try:
             with open(file_path, 'rb') as f:
@@ -64,18 +53,16 @@ def detect_file_encoding(file_path):
                     detected_encoding = result.get('encoding', 'utf-8')
                     confidence = result.get('confidence', 0)
                     
-                    # Chỉ trust nếu confidence > 0.7
                     if confidence > 0.7 and detected_encoding:
                         return detected_encoding
         except Exception as e:
-            log_error(f"Error detecting file encoding with chardet for {file_path}", e)
+            log_error(f"Error detecting encoding: {e}", e)
     
-    # Fallback encodings (test từng encoding)
     encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
     for encoding in encodings_to_try:
         try:
             with open(file_path, 'r', encoding=encoding) as f:
-                f.read(1000)  # Test đọc
+                f.read(1000)
             return encoding
         except (UnicodeDecodeError, UnicodeError):
             continue
@@ -109,7 +96,6 @@ def safe_read_file_lines(file_path, encodings=None):
                         line.encode('utf-8')
                         lines.append(line)
                     except (UnicodeEncodeError, UnicodeDecodeError):
-                        # Skip dòng lỗi
                         log_error(f"Skipping invalid line {line_num} in {file_path}")
                         continue
             return lines, encoding
@@ -262,7 +248,6 @@ class TranslationCacheManager:
                                 self._add_to_cache(cache_key, value_from_file)
                                 return value_from_file
                     except Exception as line_error:
-                        # Skip dòng lỗi, tiếp tục với dòng tiếp theo
                         continue
             except Exception as e:
                 log_error("Error reading file cache", e)
@@ -339,13 +324,6 @@ class TranslationCacheManager:
                             best_similarity = similarity
                             best_match = cached_translation
             
-            if best_match:
-                try:
-                    from modules import log_debug
-                    log_debug(f"Fuzzy cache hit: similarity={best_similarity:.2f}, text='{text[:30]}...'")
-                except ImportError:
-                    pass
-                
             return best_match
             
         except Exception as e:
@@ -407,7 +385,6 @@ class TranslationCacheManager:
                 return matches / max_len
             
             # Full Levenshtein for short texts
-            # Create distance matrix
             d = [[0] * (len2 + 1) for _ in range(len1 + 1)]
             
             for i in range(len1 + 1):
@@ -464,7 +441,6 @@ class TranslationCacheManager:
                             if line.startswith(cache_key + ':==:'):
                                 return  # Already exists, skip
                         except Exception:
-                            # Skip dòng lỗi
                             continue
                 else:
                     # File bị corrupt, tạo lại file mới
@@ -632,7 +608,6 @@ class TranslationCacheManager:
                         self._add_to_cache(cache_key, translation)
                         loaded_count += 1
                 except Exception as line_error:
-                    # Skip dòng lỗi, tiếp tục với dòng tiếp theo
                     continue
             
             # Log thông tin load preset cache (chỉ khi có entries)

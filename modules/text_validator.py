@@ -229,12 +229,10 @@ class TextValidator:
             if not text:
                 return False
             
-            # 1. Check noise level
             if self.is_too_noisy_for_translation(text):
                 log_debug(f"Skipping noisy text: '{text[:50]}...'")
                 return False
             
-            # 2. Check dialogue validity
             if not self.is_valid_dialogue_text(text):
                 log_debug(f"Skipping invalid dialogue: '{text[:50]}...'")
                 return False

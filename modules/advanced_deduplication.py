@@ -1,10 +1,4 @@
-"""
-Advanced Deduplication Module
-Giải quyết vấn đề:
-1. Same scene, different dialogue → skip (FIXED: hash text region only)
-2. Different scene, same dialogue → duplicate (FIXED: text content comparison)
-3. Short dialogue bị skip (FIXED: relaxed similarity for short text)
-"""
+"""Advanced Deduplication - Lọc text trùng lặp nâng cao"""
 import time
 import difflib
 import numpy as np
@@ -13,7 +7,6 @@ import cv2
 from collections import deque
 from typing import Optional, Tuple
 
-# Import centralized logger
 try:
     from .logger import log_error, log_debug
 except ImportError:
@@ -22,8 +15,6 @@ except ImportError:
     def log_debug(msg):
         pass
 
-# Import imagehash cho perceptual hashing (robust với scene changes)
-IMAGEHASH_AVAILABLE = False
 try:
     import imagehash
     IMAGEHASH_AVAILABLE = True
@@ -32,35 +23,21 @@ except ImportError:
 
 
 class AdvancedDeduplicator:
-    """
-    Advanced deduplication với hybrid approach:
-    - Perceptual image hash (robust với camera movement, lighting changes)
-    - Text content similarity (detect actual text changes)
-    - Time-window based caching
-    - Special handling cho short text
-    """
+    """Deduplication với hybrid approach"""
     
     def __init__(self, 
                  similarity_threshold=0.85,
                  short_text_threshold=50,
                  time_window=5.0,
                  max_cache_size=20):
-        """
-        Args:
-            similarity_threshold: Ngưỡng similarity để coi là duplicate (0.0-1.0)
-            short_text_threshold: Text ngắn hơn X chars được ưu tiên và relaxed similarity
-            time_window: Thời gian cache (seconds) - chỉ compare với text trong window này
-            max_cache_size: Max số lượng entries trong cache
-        """
+        """Khởi tạo deduplicator"""
         self.similarity_threshold = similarity_threshold
         self.short_text_threshold = short_text_threshold
         self.time_window = time_window
         self.max_cache_size = max_cache_size
         
-        # Cache: deque of (timestamp, text, text_hash, image_hash)
         self.cache = deque(maxlen=max_cache_size)
         
-        # Thống kê
         self.stats = {
             'total_checks': 0,
             'duplicates_found': 0,
@@ -73,38 +50,28 @@ class AdvancedDeduplicator:
             log_error("imagehash library không khả dụng. Sẽ dùng fallback hash method.")
     
     def is_duplicate(self, text: str, image: np.ndarray, current_time: Optional[float] = None) -> Tuple[bool, str]:
-        """
-        Check xem text+image có phải duplicate không
-        
-        Returns:
-            (is_duplicate: bool, reason: str)
-        """
+        """Kiểm tra duplicate"""
         if current_time is None:
             current_time = time.time()
         
         self.stats['total_checks'] += 1
         
-        # Empty text luôn là duplicate
         if not text or not text.strip():
             return True, "empty_text"
         
         text = text.strip()
         text_len = len(text)
         
-        # Short text tracking
         is_short_text = text_len < self.short_text_threshold
         if is_short_text:
             self.stats['short_text_processed'] += 1
         
-        # Cleanup cache - xóa entries cũ hơn time_window
         self._cleanup_cache(current_time)
         
-        # Nếu cache rỗng - không phải duplicate
         if not self.cache:
             self._add_to_cache(text, image, current_time)
             return False, "cache_empty"
         
-        # Tính hash của text và image hiện tại
         text_hash = self._compute_text_hash(text)
         image_hash = self._compute_image_hash(image)
         

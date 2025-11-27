@@ -7,7 +7,6 @@ import pytesseract
 import sys
 import os
 
-# Import centralized logger from modules
 try:
     from modules import log_error, log_debug
 except ImportError:
@@ -233,7 +232,6 @@ class TesseractOCRHandler:
             if h < min_dim or w < min_dim:
                 base_scale = max(min_dim / h, min_dim / w)
                 final_scale = base_scale * scale_factor
-                log_error(f"[INFO] Auto-scaling small text: {w}x{h} -> {int(w*final_scale)}x{int(h*final_scale)} (scale={final_scale:.2f}x)", None)
             else:
                 final_scale = scale_factor
             
@@ -264,7 +262,6 @@ class TesseractOCRHandler:
                 return []
         
         try:
-            # Convert to grayscale if needed
             if len(img.shape) == 3:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             else:
@@ -464,29 +461,69 @@ class TesseractOCRHandler:
         """
         Main OCR method với optimizations:
         - Intelligent multi-scale processing
+        - Text region detection
         - Adaptive confidence thresholds
-        - Smart scale selection dựa trên image analysis
         """
         try:
-            # Preprocess
             processed_cv_img = self.preprocess_for_ocr(img_cv_bgr, prep_mode, block_size, c_value)
             
             # Cache config
             if self.cached_prep_mode != prep_mode:
                 self.cached_prep_mode = prep_mode
-                # Map prep_mode to tesseract mode
                 if prep_mode in ['gaming', 'document', 'subtitle']:
                     tess_mode = prep_mode
                 else:
                     tess_mode = 'general'
                 self.cached_tess_params = self.get_tesseract_config(tess_mode)
             
-            # Full image OCR
+            # Text region detection (nếu được bật)
+            if self.enable_text_region_detection:
+                regions = self.detect_text_regions(processed_cv_img, min_area=100)
+                
+                if regions:
+                    all_texts = []
+                    
+                    for region in regions:
+                        if self.enable_multi_scale:
+                            optimal_scales = self._select_optimal_scales(processed_cv_img)
+                            best_result = None
+                            best_score = 0.0
+                            
+                            for scale in optimal_scales:
+                                try:
+                                    text, avg_conf, word_count = self.ocr_region_with_confidence(
+                                        processed_cv_img, region, confidence_threshold, scale_factor=scale
+                                    )
+                                    
+                                    if text:
+                                        scale_weight = 1.2 if scale in [1.0, 1.2] else 1.0
+                                        score = avg_conf * word_count * scale_weight
+                                        
+                                        if score > best_score:
+                                            best_score = score
+                                            best_result = text
+                                except Exception as e:
+                                    log_error(f"Error in multi-scale region OCR (scale={scale})", e)
+                                    continue
+                            
+                            if best_result:
+                                all_texts.append(best_result)
+                        else:
+                            text, _, _ = self.ocr_region_with_confidence(
+                                processed_cv_img, region, confidence_threshold, scale_factor=1.0
+                            )
+                            if text:
+                                all_texts.append(text)
+                    
+                    return ' '.join(all_texts)
+                else:
+                    # Không phát hiện được regions -> fallback to full image
+                    pass
+            
+            # Full image OCR (default hoặc fallback)
             full_img_region = (0, 0, processed_cv_img.shape[1], processed_cv_img.shape[0])
             
-            # Multi-scale intelligent processing (khi được bật)
             if self.enable_multi_scale:
-                # Phân tích ảnh để chọn scales thông minh
                 optimal_scales = self._select_optimal_scales(processed_cv_img)
                 
                 best_result = None
@@ -499,8 +536,6 @@ class TesseractOCRHandler:
                         )
                         
                         if text:
-                            # Scoring: confidence * word_count * scale_weight
-                            # Ưu tiên scale 1.0x và 1.2x hơn
                             scale_weight = 1.2 if scale in [1.0, 1.2] else 1.0
                             score = avg_conf * word_count * scale_weight
                             
@@ -513,7 +548,6 @@ class TesseractOCRHandler:
                 
                 return best_result if best_result else ""
             else:
-                # Single scale - nhanh nhất
                 text, _, _ = self.ocr_region_with_confidence(
                     processed_cv_img, full_img_region, confidence_threshold, scale_factor=1.0
                 )

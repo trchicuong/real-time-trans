@@ -1,16 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-MarianMT Handler - Local Neural Machine Translation
-Adapted from OCR-Translator for real-time-trans
-GPU-accelerated translation with automatic CPU fallback
-
-Performance:
-- CPU mode: 100-300ms per translation
-- GPU mode: 50-150ms per translation
-vs API: 200-2000ms
-
-Supported pairs: en-pl, pl-en, en-de, de-en, en-fr, fr-en, etc.
-"""
+"""MarianMT Handler - Neural Machine Translation cục bộ"""
 
 import threading
 import time
@@ -24,17 +12,9 @@ import warnings
 # Suppress sacremoses warning (optional dependency)
 warnings.filterwarnings('ignore', message='.*sacremoses.*')
 
-# Import log_error from modules package
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from modules import log_error, log_debug, get_base_dir
-
-# Try to import MarianMT dependencies
-MARIANMT_AVAILABLE = False
-torch = None
-GPU_AVAILABLE = False
-GPU_DEVICE = None
-GPU_NAME = None
 
 try:
     from transformers import MarianMTModel, MarianTokenizer
@@ -51,19 +31,14 @@ try:
             GPU_DEVICE = torch.device("cuda:0")
             try:
                 GPU_NAME = torch.cuda.get_device_name(0)
-                log_debug(f"[MarianMT] GPU detected: {GPU_NAME}")
             except Exception as e:
                 GPU_NAME = "Unknown GPU"
-                log_error("[MarianMT] Error getting GPU name", e)
         else:
             GPU_DEVICE = torch.device("cpu")
-            log_debug("[MarianMT] CUDA available but no GPU detected, using CPU")
     else:
         GPU_DEVICE = torch.device("cpu")
-        log_debug("[MarianMT] CUDA not available, using CPU")
     
     MARIANMT_AVAILABLE = True
-    log_debug("[MarianMT] Successfully initialized")
     
 except ImportError as e:
     log_error(f"[MarianMT] Import failed: {e}. Install: pip install transformers torch sentencepiece", e)
@@ -72,17 +47,10 @@ except Exception as e:
 
 
 class MarianMTHandler:
-    """Simplified MarianMT handler for real-time translation"""
+    """Handler cho MarianMT translation"""
     
     def __init__(self, cache_dir=None, num_beams=2, use_gpu=None):
-        """
-        Initialize MarianMT handler
-        
-        Args:
-            cache_dir: Directory to store models (default: ./marian_models_cache)
-            num_beams: Beam search value (1-8, higher = better quality but slower)
-            use_gpu: None=auto, True=force GPU, False=force CPU
-        """
+        """Khởi tạo MarianMT handler"""
         if not MARIANMT_AVAILABLE:
             raise ImportError("MarianMT not available. Install: pip install transformers torch sentencepiece")
         
@@ -91,23 +59,15 @@ class MarianMTHandler:
             if GPU_AVAILABLE:
                 self.device = GPU_DEVICE
                 self.gpu_enabled = True
-                log_debug(f"[MarianMT] GPU mode forced: {GPU_NAME}")
             else:
                 self.device = torch.device("cpu")
                 self.gpu_enabled = False
-                log_debug("[MarianMT] GPU requested but not available, using CPU")
         elif use_gpu is False:
             self.device = torch.device("cpu")
             self.gpu_enabled = False
-            log_debug("[MarianMT] CPU mode forced")
         else:
-            # Auto-detect
             self.device = GPU_DEVICE if GPU_AVAILABLE else torch.device("cpu")
             self.gpu_enabled = GPU_AVAILABLE
-            if self.gpu_enabled:
-                log_debug(f"[MarianMT] Auto-detected GPU: {GPU_NAME}")
-            else:
-                log_debug("[MarianMT] Auto-detected CPU mode")
         
         self.cache_dir = cache_dir if cache_dir else os.path.join(get_base_dir(), "marian_models_cache")
         self.num_beams = num_beams
@@ -166,7 +126,6 @@ class MarianMTHandler:
             
             # Unload previous model
             if self.active_model is not None:
-                log_debug(f"[MarianMT] Unloading previous model {self.active_model_key}")
                 self.active_model = None
                 self.active_tokenizer = None
                 self.active_model_key = None
@@ -182,8 +141,6 @@ class MarianMTHandler:
                 return None
             
             model_name = self.direct_pairs[model_key]
-            log_debug(f"[MarianMT] Loading model: {model_name} on {'GPU' if self.gpu_enabled else 'CPU'}")
-            log_debug(f"[MarianMT] Note: First download may take 1-5 minutes (~300MB)")
             
             try:
                 start_time = time.time()
@@ -206,9 +163,6 @@ class MarianMTHandler:
                 self.active_model = self.active_model.to(self.device)
                 
                 load_time = time.time() - start_time
-                device_name = "GPU" if self.device.type == 'cuda' else "CPU"
-                log_debug(f"[MarianMT] Model loaded on {device_name} in {load_time:.2f}s")
-                
                 self.active_model_key = model_key
                 return True
                 
@@ -308,18 +262,13 @@ class MarianMTHandler:
                 / self.stats['translations']
             )
             
-            device_name = "GPU" if self.device.type == 'cuda' else "CPU"
-            log_debug(f"[MarianMT] Translated on {device_name} in {trans_time*1000:.0f}ms: {len(text)} -> {len(result)} chars")
-            
             return result
             
         except torch.cuda.OutOfMemoryError:
-            log_error("[MarianMT] GPU out of memory, try using CPU mode", None)
-            log_debug("[MarianMT] Suggestion: Close other GPU apps or set marianmt_use_gpu=False in config")
+            log_error("GPU out of memory")
             return "Error: GPU out of memory"
         except Exception as e:
-            log_error(f"[MarianMT] Translation error", e)
-            log_debug(f"[MarianMT] Text length: {len(text)}, Lang: {source_lang}->{target_lang}")
+            log_error(f"Translation error: {str(e)}")
             return f"Error: {str(e)}"
     
     def get_stats(self):
@@ -336,10 +285,8 @@ class MarianMTHandler:
         }
     
     def cleanup(self):
-        """Cleanup resources"""
         with self.model_lock:
             if self.active_model is not None:
-                log_debug("[MarianMT] Cleaning up model resources")
                 model_key = self.active_model_key
                 self.active_model = None
                 self.active_tokenizer = None
@@ -347,6 +294,3 @@ class MarianMTHandler:
                 gc.collect()
                 if torch and torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                    log_debug(f"[MarianMT] Cleaned up model {model_key}, freed GPU memory")
-                else:
-                    log_debug(f"[MarianMT] Cleaned up model {model_key}")

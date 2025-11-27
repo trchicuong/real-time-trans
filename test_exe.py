@@ -5,7 +5,7 @@ Run this before building the exe to ensure everything works
 import sys
 import io
 
-# Fix encoding for Windows console
+# Fix encoding for Windows console to handle Unicode characters correctly
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 

@@ -26,7 +26,6 @@ class TextDeduplicator:
         # Recent texts: (timestamp, normalized_text, original_text)
         self.recent_texts = deque(maxlen=50)  # Giới hạn 50 entries
         
-        # Statistics
         self.total_checks = 0
         self.duplicates_filtered = 0
     
@@ -85,7 +84,6 @@ class TextDeduplicator:
                 
                 if similarity >= dynamic_threshold:
                     self.duplicates_filtered += 1
-                    log_debug(f"Duplicate detected: '{text[:30]}...' (similarity={similarity:.2f})")
                     return True, recent_original
             
             # Không phải duplicate → add vào recent texts

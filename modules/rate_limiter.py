@@ -46,7 +46,6 @@ class AdaptiveRateLimiter:
         self.backoff_multiplier = 1.0
         self.max_backoff_multiplier = 8.0  # Max 8x slowdown
         
-        # Statistics
         self.total_requests = 0
         self.total_failures = 0
         self.throttle_events = 0

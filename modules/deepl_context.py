@@ -127,7 +127,6 @@ class DeepLContextManager:
                 log_debug("Skipping DeepL context update - duplicate source text")
                 return
             
-            # Add new source text
             self.context_window.append(source_text)
             
             # Keep only last 5 texts (more than max context setting for flexibility)

@@ -67,7 +67,6 @@ def log_debug(message):
                 except Exception:
                     pass  # Complete failure
         
-        # Ghi log
         try:
             with open(debug_log_file, 'a', encoding='utf-8', errors='replace') as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: {message}\n")

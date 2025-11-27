@@ -29,7 +29,6 @@ class TranslationContinuityTracker:
         self.current_context = []  # List of (timestamp, source_text, translated_text)
         self.last_update_time = None
         
-        # Statistics
         self.total_translations = 0
         self.continuations_detected = 0
         self.merges_performed = 0

@@ -28,7 +28,6 @@ class SentenceBuffer:
         # Dấu kết thúc câu: . ! ? … (ellipsis) + optional quotes/brackets
         self.sentence_end_pattern = re.compile(r'[.!?…]+[\"\'\)\]]*\s*$')
         
-        # Statistics
         self.sentences_released = 0
         self.timeout_releases = 0
         self.immediate_releases = 0

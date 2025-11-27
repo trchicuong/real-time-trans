@@ -7,15 +7,14 @@ import os
 import sys
 
 # Fix scaling issues on Windows with high DPI displays
-if os.name == 'nt':  # Windows only
+if os.name == 'nt':
     try:
         import ctypes
-        # Set process DPI awareness (Windows 8.1+)
-        # PROCESS_PER_MONITOR_DPI_AWARE = 2
+        # Set process DPI awareness to per-monitor DPI awareness (Windows 8.1+)
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except (AttributeError, OSError):
         try:
-            # Fallback for Windows 8 and older
+            # Fallback for older Windows versions
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception as e:
             # log_error chưa được định nghĩa ở đây, sẽ log sau khi import
@@ -74,7 +73,6 @@ try:
 except ImportError:
     pass
 
-# Import modules from modules package
 from modules import (
     log_error,
     log_debug,
@@ -111,10 +109,8 @@ MarianMTHandler = None
 try:
     from handlers.marianmt_handler import MarianMTHandler, MARIANMT_AVAILABLE
     MARIANMT_HANDLER_AVAILABLE = MARIANMT_AVAILABLE
-    if MARIANMT_HANDLER_AVAILABLE:
-        log_debug("[MarianMT] Handler successfully imported")
 except ImportError as e:
-    log_debug(f"[MarianMT] Import failed: {e}")
+    pass
 
 def get_actual_screen_size():
     """
@@ -173,7 +169,6 @@ def get_all_monitors_bounds():
 def find_tesseract(custom_path=None):
     """Tự động tìm đường dẫn Tesseract OCR - hỗ trợ Windows, Linux, macOS"""
     if custom_path:
-        # Chuẩn hóa đường dẫn
         custom_path = os.path.normpath(custom_path)
         if os.path.isfile(custom_path):
             return os.path.normpath(custom_path)
@@ -278,8 +273,6 @@ class ScreenTranslator:
         self.tesseract_multi_scale = False  # Default: disabled (tối ưu tốc độ)
         self.tesseract_text_region_detection = False  # Default: disabled (tốn thời gian)
         
-        # OCR Handlers (nếu có) - cần source_language đã được khởi tạo
-        # Note: easyocr_handler sẽ được khởi tạo lại khi cần với GPU option
         if HANDLERS_AVAILABLE:
             self.tesseract_handler = TesseractOCRHandler(
                 source_language=self.source_language,
@@ -366,7 +359,7 @@ class ScreenTranslator:
         self.prev_ocr_text = ""
         self.last_processed_subtitle = None
         self.last_successful_translation_time = 0.0
-        self.stable_threshold = 2  # Số lần text phải giống nhau để coi là stable (2 = cần ít nhất 2 lần đọc giống nhau để giảm dịch trùng)
+        self.stable_threshold = 2  # Số lần text phải giống nhau để coi là stable
         self.min_translation_interval = 0.03  # Giảm xuống 0.03s cho response nhanh hơn (cache hits)
         
         # Threading infrastructure
@@ -401,11 +394,6 @@ class ScreenTranslator:
         self.last_cleanup_time = time.time()
         self.cleanup_interval = 300  # Cleanup mỗi 5 phút
         
-        # Advanced Deduplicator - CRITICAL FIX cho các vấn đề duplicate
-        # Giải quyết:
-        # 1. Same scene, different dialogue → skip (FIXED)
-        # 2. Different scene, same dialogue → duplicate (FIXED)
-        # 3. Short dialogue bị skip (FIXED: relaxed similarity)
         self.advanced_deduplicator = AdvancedDeduplicator(
             similarity_threshold=0.85,  # 85% similarity = duplicate
             short_text_threshold=50,    # Text < 50 chars được ưu tiên
@@ -423,7 +411,6 @@ class ScreenTranslator:
         self.current_scan_interval = self.base_scan_interval
         self.overload_detected = False  # Track OCR overload state
         
-        # Threads
         self.capture_thread = None
         self.ocr_thread = None
         self.translation_thread = None
@@ -477,8 +464,7 @@ class ScreenTranslator:
                         enable_multi_scale=self.easyocr_multi_scale
                     )
                 except Exception as e:
-                    log_error("Lỗi khởi tạo EasyOCR handler từ config", e)
-                    self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
+                    log_error("Lỗi khởi tạo EasyOCR handler", e)
                     # Nếu handler khởi tạo thất bại, fallback về reader cũ
                     self.easyocr_handler = None
                     self.initialize_easyocr_reader()
@@ -491,9 +477,8 @@ class ScreenTranslator:
             try:
                 import deepl
                 self.deepl_api_client = deepl.Translator(self.deepl_api_key)
-                self.log("Đã khởi tạo DeepL client từ config")
             except Exception as e:
-                log_error("Lỗi khởi tạo DeepL từ config", e)
+                log_error("Lỗi khởi tạo DeepL", e)
                 self.use_deepl = False
                 if hasattr(self, 'translation_service_var'):
                     self.translation_service_var.set("google")
@@ -501,11 +486,10 @@ class ScreenTranslator:
         # Try to find Tesseract automatically (don't verify yet to avoid startup errors)
         tesseract_path = find_tesseract(self.custom_tesseract_path)
         if tesseract_path:
-            # Chuẩn hóa đường dẫn
             tesseract_path = os.path.normpath(tesseract_path)
             pytesseract.pytesseract.tesseract_cmd = tesseract_path
             self.custom_tesseract_path = tesseract_path
-            self.log(f"Tìm thấy Tesseract tại: {tesseract_path}")
+            pass
             if hasattr(self, 'tesseract_path_label'):
                 self.tesseract_path_label.config(
                     text=f"Đường dẫn: {tesseract_path}",
@@ -527,7 +511,6 @@ class ScreenTranslator:
         Tăng scan interval khi có quá nhiều active OCR calls
         """
         try:
-            # Count active OCR calls
             active_ocr_count = len(self.active_ocr_calls)
             
             # Base interval từ user setting (ms)
@@ -540,21 +523,15 @@ class ScreenTranslator:
             # Adaptive logic: nếu active OCR calls > 5, tăng scan interval lên 150%
             if active_ocr_count > 5:
                 if not self.overload_detected:
-                    # First detection of overload
-                    self.current_scan_interval = int(base_interval * 1.5)  # 150%
+                    self.current_scan_interval = int(base_interval * 1.5)
                     self.overload_detected = True
-                    log_error(f"ADAPTIVE: OCR overload detected ({active_ocr_count} active calls), increasing scan interval to {self.current_scan_interval}ms")
                 else:
-                    # Already in overload state, maintain increased interval
-                    pass  # Keep current_scan_interval unchanged
+                    pass
             elif active_ocr_count < 5:
                 if self.overload_detected:
-                    # Load has decreased, return to normal
                     self.current_scan_interval = base_interval
                     self.overload_detected = False
-                    log_error(f"ADAPTIVE: OCR load normalized ({active_ocr_count} active calls), returning scan interval to {self.current_scan_interval}ms")
                 else:
-                    # Normal state, no change needed
                     self.current_scan_interval = base_interval
         except Exception as e:
             # Fallback to base interval on error
@@ -706,7 +683,6 @@ class ScreenTranslator:
                     self.save_config()
                     
                     if self.verify_tesseract():
-                        self.log(f"Đã đặt đường dẫn Tesseract thành công: {tesseract_path}")
                         messagebox.showinfo("Thành công", "Đã cấu hình đường dẫn Tesseract OCR thành công!")
                         return
                     else:
@@ -728,7 +704,6 @@ class ScreenTranslator:
                             self.save_config()
                             
                             if self.verify_tesseract():
-                                self.log(f"Đã đặt đường dẫn Tesseract thành công: {tesseract_path}")
                                 messagebox.showinfo("Thành công", f"Đã tìm thấy và cấu hình Tesseract OCR:\n{tesseract_path}")
                                 found = True
                                 return
@@ -764,43 +739,35 @@ class ScreenTranslator:
         )
         author_label.pack()
         
-        # Create notebook for tabs
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Tab 1: Cài Đặt (Settings)
         settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(settings_tab, text="Cài Đặt")
         self.create_settings_tab(settings_tab)
         
-        # Tab 2: Giao Diện Dịch (Overlay)
         overlay_tab = ttk.Frame(self.notebook)
         self.notebook.add(overlay_tab, text="Giao Diện Dịch")
         self.create_overlay_tab(overlay_tab)
         
-        # Tab 3: Điều Khiển (Controls)
         controls_tab = ttk.Frame(self.notebook)
         self.notebook.add(controls_tab, text="Điều Khiển")
         self.create_controls_tab(controls_tab)
         
-        # Tab 4: Phím Tắt (Hotkeys)
         hotkeys_tab = ttk.Frame(self.notebook)
         self.notebook.add(hotkeys_tab, text="Phím Tắt")
         self.create_hotkeys_tab(hotkeys_tab)
         
-        # Tab 5: Trạng Thái (Status)
         status_tab = ttk.Frame(self.notebook)
         self.notebook.add(status_tab, text="Trạng Thái")
         self.create_status_tab(status_tab)
         
-        # Tab 6: Hướng Dẫn (Notes/Help)
         notes_tab = ttk.Frame(self.notebook)
         self.notebook.add(notes_tab, text="Hướng Dẫn")
         self.create_notes_tab(notes_tab)
     
     def create_settings_tab(self, parent):
         """Create settings tab"""
-        # Region Selection Frame
         region_frame = ttk.LabelFrame(parent, text="Vùng Chụp Màn Hình", padding=10)
         region_frame.pack(fill=tk.X, padx=10, pady=5)
         
@@ -824,11 +791,9 @@ class ScreenTranslator:
             command=self.select_region
         ).pack(pady=5)
         
-        # Settings Frame
         settings_frame = ttk.LabelFrame(parent, text="Cài Đặt OCR & Dịch", padding=10)
         settings_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Source Language
         ttk.Label(settings_frame, text="Ngôn Ngữ Nguồn:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.source_lang_var = tk.StringVar(value=self.source_language)
         source_lang_combo = ttk.Combobox(
@@ -841,7 +806,6 @@ class ScreenTranslator:
         source_lang_combo.grid(row=0, column=1, pady=5)
         source_lang_combo.bind("<<ComboboxSelected>>", self.on_source_lang_change)
         
-        # Update Interval
         ttk.Label(settings_frame, text="Khoảng Thời Gian Cập Nhật (ms):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.interval_var = tk.StringVar(value=str(int(self.update_interval * 1000)))
         interval_spin = ttk.Spinbox(
@@ -855,12 +819,10 @@ class ScreenTranslator:
         interval_spin.grid(row=1, column=1, pady=5)
         interval_spin.bind("<FocusOut>", self.on_interval_change)
         
-        # OCR Engine Selection - chỉ free engines
         ttk.Label(settings_frame, text="Engine OCR:").grid(row=2, column=0, sticky=tk.W, pady=5)
         ocr_engine_values = ["tesseract"]
         if self.EASYOCR_AVAILABLE:
             ocr_engine_values.append("easyocr")
-        # Đảm bảo giá trị hiện tại có trong danh sách
         if self.ocr_engine not in ocr_engine_values:
             self.ocr_engine = "tesseract"
         self.ocr_engine_var = tk.StringVar(value=self.ocr_engine)
@@ -874,7 +836,6 @@ class ScreenTranslator:
         ocr_engine_combo.grid(row=2, column=1, pady=5)
         ocr_engine_combo.bind("<<ComboboxSelected>>", self.on_ocr_engine_change)
         
-        # Tesseract Path (only show when Tesseract is selected)
         self.tesseract_path_row = 3
         self.tesseract_path_label_widget = ttk.Label(settings_frame, text="Đường Dẫn Tesseract:")
         self.tesseract_path_label_widget.grid(row=self.tesseract_path_row, column=0, sticky=tk.W, pady=5)
@@ -882,24 +843,18 @@ class ScreenTranslator:
         tesseract_path_frame.grid(row=self.tesseract_path_row, column=1, sticky=tk.W+tk.E, pady=5)
         self.tesseract_path_label_frame = tesseract_path_frame  # Lưu reference để ẩn/hiện
         
-        # Display current path
         current_path = "Đang kiểm tra..."
         path_color = "gray"
         
-        # Kiểm tra xem Tesseract đã được cấu hình chưa
         if self.custom_tesseract_path and os.path.exists(self.custom_tesseract_path):
-            # Chuẩn hóa đường dẫn khi hiển thị
             current_path = os.path.normpath(self.custom_tesseract_path)
             path_color = "green"
         else:
-            # Thử xác minh xem Tesseract có hoạt động không
             try:
                 if pytesseract.pytesseract.tesseract_cmd:
-                    # Chuẩn hóa đường dẫn khi hiển thị
                     current_path = os.path.normpath(pytesseract.pytesseract.tesseract_cmd)
                     path_color = "green"
                 else:
-                    # Kiểm tra xem có trong PATH không
                     if self.verify_tesseract():
                         current_path = "Tự động phát hiện (PATH)"
                         path_color = "green"
@@ -933,7 +888,6 @@ class ScreenTranslator:
         )
         self.tesseract_browse_button.pack(side=tk.LEFT)
         
-        # Tesseract Options (only show when Tesseract is selected)
         self.tesseract_options_row = 4
         self.tesseract_options_frame = ttk.Frame(settings_frame)
         self.tesseract_options_frame.grid(row=self.tesseract_options_row, column=0, columnspan=2, sticky=tk.W, pady=5)
@@ -956,7 +910,6 @@ class ScreenTranslator:
         )
         tesseract_text_region_check.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
-        # Info label
         tesseract_info = tk.Label(
             self.tesseract_options_frame,
             text="(Chỉ nên bật khi cần độ chính xác cao)",
@@ -965,12 +918,10 @@ class ScreenTranslator:
         )
         tesseract_info.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
-        # EasyOCR GPU Option (only show when EasyOCR is selected)
         self.easyocr_gpu_row = 3
         self.easyocr_gpu_frame = ttk.Frame(settings_frame)
         self.easyocr_gpu_frame.grid(row=self.easyocr_gpu_row, column=0, columnspan=2, sticky=tk.W, pady=5)
         
-        # Detect GPU availability for info display
         gpu_available = False
         gpu_name = None
         try:
@@ -981,7 +932,6 @@ class ScreenTranslator:
         except Exception as e:
             log_error("Error checking GPU availability in UI", e)
         
-        # GPU option: Auto/CPU/GPU
         self.easyocr_gpu_var = tk.StringVar(value="auto")  # auto, cpu, gpu
         if self.easyocr_use_gpu is True:
             self.easyocr_gpu_var.set("gpu")
@@ -1020,7 +970,6 @@ class ScreenTranslator:
         )
         gpu_radio.pack(side=tk.LEFT, padx=5)
         
-        # Disable GPU option if GPU not available
         if not gpu_available:
             gpu_radio.config(state=tk.DISABLED)
             gpu_info_text = " (GPU không khả dụng)"
@@ -1035,7 +984,6 @@ class ScreenTranslator:
         )
         self.gpu_info_label.pack(side=tk.LEFT, padx=5)
         
-        # EasyOCR Multi-scale Option (only show when EasyOCR is selected)
         self.easyocr_multi_scale_row = 4
         self.easyocr_multi_scale_frame = ttk.Frame(settings_frame)
         self.easyocr_multi_scale_frame.grid(row=self.easyocr_multi_scale_row, column=0, columnspan=2, sticky=tk.W, pady=5)
@@ -1049,7 +997,6 @@ class ScreenTranslator:
         )
         multi_scale_check.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
-        # Info label
         multi_scale_info = tk.Label(
             self.easyocr_multi_scale_frame,
             text="(Chỉ nên bật khi cần độ chính xác cao với text khó đọc)",
@@ -1058,11 +1005,9 @@ class ScreenTranslator:
         )
         multi_scale_info.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
-        # Translation Service Selection
         translation_frame = ttk.LabelFrame(parent, text="Dịch Thuật", padding=10)
         translation_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Target Language
         ttk.Label(translation_frame, text="Ngôn Ngữ Đích:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.target_lang_var = tk.StringVar(value=self.target_language)
         target_lang_combo = ttk.Combobox(
@@ -1075,17 +1020,14 @@ class ScreenTranslator:
         target_lang_combo.grid(row=0, column=1, pady=5)
         target_lang_combo.bind("<<ComboboxSelected>>", self.on_target_lang_change)
         
-        # Translation Service
         ttk.Label(translation_frame, text="Dịch Vụ:").grid(row=1, column=0, sticky=tk.W, pady=5)
         
-        # Build service list based on availability
         services = ["google"]
         if self.DEEPL_API_AVAILABLE:
             services.append("deepl")
         if self.MARIANMT_AVAILABLE:
             services.append("local (MarianMT)")
         
-        # Sync with config
         if self.use_marianmt and self.MARIANMT_AVAILABLE:
             initial_service = "local (MarianMT)"
         elif self.use_deepl:
@@ -1104,17 +1046,14 @@ class ScreenTranslator:
         service_combo.grid(row=1, column=1, pady=5)
         service_combo.bind("<<ComboboxSelected>>", self.on_translation_service_change)
         
-        # DeepL API Key (ẩn/hiện dựa vào translation service)
         next_row = 2
         self.deepl_widgets = []  # Lưu tất cả widgets liên quan đến DeepL
         
         if self.DEEPL_API_AVAILABLE:
-            # Label cho API Key
             deepl_key_label = ttk.Label(translation_frame, text="DeepL API Key:")
             deepl_key_label.grid(row=next_row, column=0, sticky=tk.W, pady=5)
             self.deepl_widgets.append(deepl_key_label)
             
-            # Entry cho API Key
             self.deepl_api_key_var = tk.StringVar(value=self.deepl_api_key)
             deepl_key_entry = ttk.Entry(
                 translation_frame,
@@ -1127,12 +1066,10 @@ class ScreenTranslator:
             self.deepl_widgets.append(deepl_key_entry)
             next_row += 1
             
-            # Label cho Context Window
             context_label = ttk.Label(translation_frame, text="Context Window:")
             context_label.grid(row=next_row, column=0, sticky=tk.W, pady=5)
             self.deepl_widgets.append(context_label)
             
-            # Combobox cho Context Window
             self.deepl_context_window_var = tk.IntVar(value=self.deepl_context_window_size)
             context_window_combo = ttk.Combobox(
                 translation_frame,
@@ -1145,7 +1082,6 @@ class ScreenTranslator:
             context_window_combo.bind("<<ComboboxSelected>>", self.on_deepl_context_window_change)
             self.deepl_widgets.append(context_window_combo)
             
-            # Label mô tả cho Context Window
             context_desc_label = ttk.Label(
                 translation_frame, 
                 text="(Số subtitle trước đó dùng làm context, 0 = tắt)",
@@ -1156,18 +1092,15 @@ class ScreenTranslator:
             self.deepl_widgets.append(context_desc_label)
             next_row += 1
             
-            # Ẩn/hiện widgets dựa vào service hiện tại
             self.toggle_deepl_widgets()
         
         translation_frame.columnconfigure(1, weight=1)
     
     def create_overlay_tab(self, parent):
         """Tạo tab tùy chỉnh overlay"""
-        # Frame tùy chỉnh overlay
         overlay_frame = ttk.LabelFrame(parent, text="Tùy Chỉnh Giao Diện Dịch", padding=10)
         overlay_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Tạo frame có thể cuộn cho cài đặt overlay
         canvas = tk.Canvas(overlay_frame)
         scrollbar = ttk.Scrollbar(overlay_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -1185,7 +1118,6 @@ class ScreenTranslator:
         
         settings_container = scrollable_frame
         
-        # Font Size
         ttk.Label(settings_container, text="Cỡ Chữ:").grid(row=0, column=0, sticky=tk.W, pady=3)
         self.font_size_var = tk.StringVar(value=str(self.overlay_font_size))
         font_size_spin = ttk.Spinbox(
@@ -1198,7 +1130,6 @@ class ScreenTranslator:
         )
         font_size_spin.grid(row=0, column=1, pady=3, padx=5)
         
-        # Transparency
         ttk.Label(settings_container, text="Độ Trong Suốt:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.transparency_var = tk.StringVar(value=str(int(self.overlay_transparency * 100)))
         transparency_spin = ttk.Spinbox(
@@ -1211,7 +1142,6 @@ class ScreenTranslator:
         )
         transparency_spin.grid(row=0, column=3, pady=3, padx=5)
         
-        # Width
         ttk.Label(settings_container, text="Chiều Rộng:").grid(row=1, column=0, sticky=tk.W, pady=3)
         self.width_var = tk.StringVar(value=str(self.overlay_width))
         width_spin = ttk.Spinbox(
@@ -1224,7 +1154,6 @@ class ScreenTranslator:
         )
         width_spin.grid(row=1, column=1, pady=3, padx=5)
         
-        # Height
         ttk.Label(settings_container, text="Chiều Cao:").grid(row=1, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.height_var = tk.StringVar(value=str(self.overlay_height))
         height_spin = ttk.Spinbox(
@@ -1237,19 +1166,16 @@ class ScreenTranslator:
         )
         height_spin.grid(row=1, column=3, pady=3, padx=5)
         
-        # Text Color
         ttk.Label(settings_container, text="Màu Chữ:").grid(row=2, column=0, sticky=tk.W, pady=3)
         self.text_color_var = tk.StringVar(value=self.overlay_text_color)
         text_color_entry = ttk.Entry(settings_container, textvariable=self.text_color_var, width=12)
         text_color_entry.grid(row=2, column=1, pady=3, padx=5)
         
-        # Background Color
         ttk.Label(settings_container, text="Màu Nền:").grid(row=2, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.bg_color_var = tk.StringVar(value=self.overlay_bg_color)
         bg_color_entry = ttk.Entry(settings_container, textvariable=self.bg_color_var, width=12)
         bg_color_entry.grid(row=2, column=3, pady=3, padx=5)
         
-        # Show Original Text
         self.show_original_var = tk.BooleanVar(value=self.overlay_show_original)
         show_original_check = ttk.Checkbutton(
             settings_container,
@@ -1258,7 +1184,6 @@ class ScreenTranslator:
         )
         show_original_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
         
-        # Text Alignment
         ttk.Label(settings_container, text="Căn Lề:").grid(row=3, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.text_align_var = tk.StringVar(value=self.overlay_text_align)
         align_combo = ttk.Combobox(
@@ -1270,7 +1195,6 @@ class ScreenTranslator:
         )
         align_combo.grid(row=3, column=3, pady=3, padx=5)
         
-        # Font Family
         ttk.Label(settings_container, text="Phông Chữ:").grid(row=4, column=0, sticky=tk.W, pady=3)
         self.font_family_var = tk.StringVar(value=self.overlay_font_family)
         font_family_combo = ttk.Combobox(
@@ -1284,7 +1208,6 @@ class ScreenTranslator:
         )
         font_family_combo.grid(row=4, column=1, pady=3, padx=5)
         
-        # Font Weight
         ttk.Label(settings_container, text="Độ Đậm:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.font_weight_var = tk.StringVar(value=self.overlay_font_weight)
         font_weight_combo = ttk.Combobox(
@@ -1296,7 +1219,6 @@ class ScreenTranslator:
         )
         font_weight_combo.grid(row=4, column=3, pady=3, padx=5)
         
-        # Line Spacing
         ttk.Label(settings_container, text="Khoảng Cách Dòng:").grid(row=5, column=0, sticky=tk.W, pady=3)
         self.line_spacing_var = tk.StringVar(value=str(self.overlay_line_spacing))
         line_spacing_spin = ttk.Spinbox(
@@ -1310,13 +1232,11 @@ class ScreenTranslator:
         )
         line_spacing_spin.grid(row=5, column=1, pady=3, padx=5)
         
-        # Original Text Color
         ttk.Label(settings_container, text="Màu Văn Bản Gốc:").grid(row=5, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.original_color_var = tk.StringVar(value=self.overlay_original_color)
         original_color_entry = ttk.Entry(settings_container, textvariable=self.original_color_var, width=12)
         original_color_entry.grid(row=5, column=3, pady=3, padx=5)
         
-        # Padding X
         ttk.Label(settings_container, text="Khoảng Cách Ngang:").grid(row=6, column=0, sticky=tk.W, pady=3)
         self.padding_x_var = tk.StringVar(value=str(self.overlay_padding_x))
         padding_x_spin = ttk.Spinbox(
@@ -1329,7 +1249,6 @@ class ScreenTranslator:
         )
         padding_x_spin.grid(row=6, column=1, pady=3, padx=5)
         
-        # Padding Y
         ttk.Label(settings_container, text="Khoảng Cách Dọc:").grid(row=6, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.padding_y_var = tk.StringVar(value=str(self.overlay_padding_y))
         padding_y_spin = ttk.Spinbox(
@@ -1342,7 +1261,6 @@ class ScreenTranslator:
         )
         padding_y_spin.grid(row=6, column=3, pady=3, padx=5)
         
-        # Border Width
         ttk.Label(settings_container, text="Độ Dày Viền:").grid(row=7, column=0, sticky=tk.W, pady=3)
         self.border_width_var = tk.StringVar(value=str(self.overlay_border_width))
         border_width_spin = ttk.Spinbox(
@@ -1355,13 +1273,11 @@ class ScreenTranslator:
         )
         border_width_spin.grid(row=7, column=1, pady=3, padx=5)
         
-        # Border Color
         ttk.Label(settings_container, text="Màu Viền:").grid(row=7, column=2, sticky=tk.W, pady=3, padx=(20, 0))
         self.border_color_var = tk.StringVar(value=self.overlay_border_color)
         border_color_entry = ttk.Entry(settings_container, textvariable=self.border_color_var, width=12)
         border_color_entry.grid(row=7, column=3, pady=3, padx=5)
         
-        # Word Wrap
         self.word_wrap_var = tk.BooleanVar(value=self.overlay_word_wrap)
         word_wrap_check = ttk.Checkbutton(
             settings_container,
@@ -1370,17 +1286,14 @@ class ScreenTranslator:
         )
         word_wrap_check.grid(row=8, column=0, columnspan=4, sticky=tk.W, pady=5)
         
-        # Keep Translation History
         self.keep_history_var = tk.BooleanVar(value=self.overlay_keep_history)
         keep_history_check = ttk.Checkbutton(
             settings_container,
             text="Ghi Lại Lịch Sử Dịch (Không Ghi Đè)",
             variable=self.keep_history_var
-            # Không có command - chỉ apply khi nhấn nút Áp dụng
         )
         keep_history_check.grid(row=9, column=0, columnspan=4, sticky=tk.W, pady=5)
         
-        # Preset configurations frame
         preset_frame = ttk.LabelFrame(settings_container, text="Cấu Hình Nhanh (Preset)", padding=10)
         preset_frame.grid(row=10, column=0, columnspan=4, pady=10, sticky=tk.EW)
         
@@ -1415,7 +1328,6 @@ class ScreenTranslator:
             width=15
         ).pack(side=tk.LEFT, padx=5)
         
-        # Apply and Reset buttons frame
         apply_button_frame = ttk.Frame(settings_container)
         apply_button_frame.grid(row=11, column=0, columnspan=4, pady=15, sticky=tk.EW)
         
@@ -1435,7 +1347,6 @@ class ScreenTranslator:
     
     def create_controls_tab(self, parent):
         """Create controls tab"""
-        # Control Frame
         control_frame = ttk.LabelFrame(parent, text="Điều Khiển Dịch", padding=10)
         control_frame.pack(fill=tk.X, padx=10, pady=5)
         
@@ -1455,7 +1366,6 @@ class ScreenTranslator:
         )
         self.stop_button.pack(pady=5, fill=tk.X)
         
-        # Lock overlay frame
         lock_frame = ttk.LabelFrame(parent, text="Khóa Màn Hình Dịch", padding=10)
         lock_frame.pack(fill=tk.X, padx=10, pady=5)
         
@@ -1480,7 +1390,6 @@ class ScreenTranslator:
     
     def create_status_tab(self, parent):
         """Create status tab"""
-        # Status Frame
         status_frame = ttk.LabelFrame(parent, text="Trạng Thái & Nhật Ký", padding=10)
         status_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -1500,11 +1409,9 @@ class ScreenTranslator:
     
     def create_notes_tab(self, parent):
         """Create notes/help tab for user instructions"""
-        # Instructions frame
         instructions_frame = ttk.LabelFrame(parent, text="Hướng Dẫn Sử Dụng", padding=10)
         instructions_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Tạo vùng văn bản có thể cuộn
         notes_canvas = tk.Canvas(instructions_frame, bg="white")
         notes_scrollbar = ttk.Scrollbar(instructions_frame, orient="vertical", command=notes_canvas.yview)
         notes_scrollable_frame = ttk.Frame(notes_canvas)
@@ -1726,16 +1633,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
         notes_scrollbar.pack(side="right", fill="y")
     
     def on_lock_overlay_change(self):
-        """Handle overlay lock state change"""
         self.overlay_locked = self.overlay_lock_var.get()
         self.save_config()
-        
-        if self.overlay_locked:
-            self.log("Đã khóa màn hình dịch - không thể di chuyển hoặc thay đổi kích thước")
-        else:
-            self.log("Đã mở khóa màn hình dịch - có thể di chuyển và thay đổi kích thước")
-    
-    # ============= HOTKEYS METHODS =============
     
     def setup_hotkeys(self):
         """Đăng ký callbacks cho hotkeys"""
@@ -1754,7 +1653,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         if self.hotkeys_enabled:
             try:
                 self.hotkey_manager.start()
-                self.log("Hotkeys đã được kích hoạt")
             except Exception as e:
                 log_error("Lỗi khởi động hotkeys", e)
                 self.log(f"Không thể kích hoạt hotkeys: {e}")
@@ -1776,10 +1674,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 return
             
             self.is_paused = not self.is_paused
-            if self.is_paused:
-                self.log("Đã tạm dừng dịch (nhấn lại để tiếp tục)")
-            else:
-                self.log("Đã tiếp tục dịch")
         except Exception as e:
             log_error("Lỗi hotkey pause/resume", e)
 
@@ -1787,7 +1681,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Hotkey callback: Xóa lịch sử dịch"""
         try:
             self.clear_translation_history()
-            self.log("Đã xóa lịch sử dịch")
         except Exception as e:
             log_error("Lỗi hotkey clear history", e)
 
@@ -1798,10 +1691,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 current_state = self.overlay_window.winfo_viewable()
                 if current_state:
                     self.overlay_window.withdraw()
-                    self.log("Đã ẩn overlay")
                 else:
                     self.overlay_window.deiconify()
-                    self.log("Đã hiện overlay")
         except Exception as e:
             log_error("Lỗi hotkey toggle overlay", e)
 
@@ -1812,11 +1703,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             if hasattr(self, 'overlay_lock_var'):
                 self.overlay_lock_var.set(self.overlay_locked)
             self.save_config()
-            
-            if self.overlay_locked:
-                self.log("Đã khóa overlay")
-            else:
-                self.log("Đã mở khóa overlay")
         except Exception as e:
             log_error("Lỗi hotkey toggle lock", e)
 
@@ -1824,11 +1710,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Tạo tab cấu hình hotkeys"""
         from modules import HotkeyManager
         
-        # Header
         header_frame = ttk.LabelFrame(parent, text="Cấu Hình Phím Tắt", padding=10)
         header_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Enable/Disable hotkeys
         self.hotkeys_enabled_var = tk.BooleanVar(value=self.hotkeys_enabled)
         enable_check = ttk.Checkbutton(
             header_frame,
@@ -1846,11 +1730,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         )
         info_label.pack(anchor=tk.W, pady=(0, 5))
         
-        # Hotkeys list frame
         hotkeys_frame = ttk.LabelFrame(parent, text="Danh Sách Phím Tắt", padding=10)
         hotkeys_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Create scrollable frame
         canvas = tk.Canvas(hotkeys_frame)
         scrollbar = ttk.Scrollbar(hotkeys_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -1866,7 +1748,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # Hotkey entries
         self.hotkey_vars = {}
         self.hotkey_labels = {}
         
@@ -1883,11 +1764,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
         
         row = 0
         for action, description in hotkey_descriptions.items():
-            # Description label
             desc_label = ttk.Label(scrollable_frame, text=description, width=25)
             desc_label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
             
-            # Current hotkey display
             current_hotkey = current_hotkeys.get(action, '')
             display_text = HotkeyManager.format_hotkey_display(current_hotkey)
             
@@ -1900,7 +1779,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             )
             hotkey_entry.grid(row=row, column=1, padx=5, pady=5)
             
-            # Display label
             display_label = tk.Label(
                 scrollable_frame,
                 text=display_text,
@@ -1910,13 +1788,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
             display_label.grid(row=row, column=2, sticky=tk.W, padx=5, pady=5)
             self.hotkey_labels[action] = display_label
             
-            # Bind update event
             hotkey_entry.bind('<FocusOut>', lambda e, a=action: self.on_hotkey_change(a))
             hotkey_entry.bind('<Return>', lambda e, a=action: self.on_hotkey_change(a))
             
             row += 1
         
-        # Buttons frame
         buttons_frame = ttk.Frame(parent)
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
         
@@ -1932,7 +1808,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             command=self.apply_hotkeys
         ).pack(side=tk.RIGHT, padx=5)
         
-        # Help text
         help_frame = ttk.LabelFrame(parent, text="Hướng Dẫn", padding=10)
         help_frame.pack(fill=tk.X, padx=10, pady=5)
         
@@ -1960,15 +1835,12 @@ Chúc bạn sử dụng công cụ hiệu quả!
         if self.hotkeys_enabled:
             try:
                 self.hotkey_manager.start()
-                self.log("Đã bật hotkeys")
             except Exception as e:
                 log_error("Lỗi kích hoạt hotkeys", e)
-                self.log(f"Lỗi kích hoạt hotkeys: {e}")
                 self.hotkeys_enabled_var.set(False)
                 self.hotkeys_enabled = False
         else:
             self.hotkey_manager.stop()
-            self.log("Đã tắt hotkeys")
         
         self.save_config()
 
@@ -1992,11 +1864,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.hotkey_vars[action].set(current_hotkeys.get(action, ''))
                 return
             
-            # Update display
             display_text = HotkeyManager.format_hotkey_display(new_hotkey)
             self.hotkey_labels[action].config(text=display_text)
-            
-            self.log(f"Hotkey '{action}' được cập nhật thành: {display_text}")
             
         except Exception as e:
             log_error(f"Lỗi cập nhật hotkey {action}", e)
@@ -2029,7 +1898,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.hotkey_manager.start()
             
             self.save_config()
-            self.log("Đã áp dụng hotkeys mới")
             messagebox.showinfo("Thành công", "Đã áp dụng cấu hình hotkeys mới!")
         except Exception as e:
             log_error("Lỗi áp dụng hotkeys", e)
@@ -2057,7 +1925,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     display_text = HotkeyManager.format_hotkey_display(hotkey_str)
                     self.hotkey_labels[action].config(text=display_text)
             
-            self.log("Đã khôi phục hotkeys về mặc định")
         except Exception as e:
             log_error("Lỗi reset hotkeys", e)
             messagebox.showerror("Lỗi", f"Không thể reset hotkeys: {e}")
@@ -2280,7 +2147,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             )
             self.start_button.config(state=tk.NORMAL)
             self.save_config()
-            self.log(f"Đã chọn vùng: {region}")
         else:
             self.region_label.config(
                 text="Chưa chọn vùng",
@@ -2325,7 +2191,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.log(f"Cặp ngôn ngữ {src}->{tgt} chưa hỗ trợ trong MarianMT (sẽ dùng Google)")
         
         self.save_config()
-        self.log(f"Đã đổi ngôn ngữ đích: {self.target_language}")
     
     def on_translation_service_change(self, event=None):
         """Handle translation service change"""
@@ -2413,7 +2278,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     self.use_marianmt = False
                     self.save_config()
             else:
-                self.log("Đã chuyển sang MarianMT local translation")
+                pass
                 # Reload model if language pair changed (chuẩn hóa mã)
                 src_map = {
                     "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
@@ -2459,7 +2324,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             try:
                 import deepl
                 self.deepl_api_client = deepl.Translator(self.deepl_api_key)
-                self.log("Đã chuyển sang DeepL API")
+                pass
             except Exception as e:
                 log_error("Lỗi khởi tạo DeepL khi chuyển dịch vụ", e)
                 messagebox.showerror("Lỗi", f"Không thể khởi tạo DeepL: {e}")
@@ -2473,7 +2338,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Clear DeepL context when switching to Google
                 if hasattr(self, 'deepl_context_manager'):
                     self.deepl_context_manager.clear_context()
-                self.log("Đã chuyển sang Google Translate")
+                pass
     
     def toggle_deepl_widgets(self):
         """Ẩn/hiện DeepL widgets dựa vào translation service"""
@@ -2498,7 +2363,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             if self.use_deepl and self.deepl_api_key:
                 try:
                     self.deepl_api_client = deepl.Translator(self.deepl_api_key)
-                    self.log("Đã cập nhật DeepL API Key")
                 except Exception as e:
                     log_error("Lỗi khởi tạo DeepL khi cập nhật API key", e)
                     self.log(f"Lỗi khởi tạo DeepL: {e}")
@@ -2510,8 +2374,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             if new_size != self.deepl_context_window_size:
                 self.deepl_context_window_size = new_size
                 self.deepl_context_manager.set_context_size(new_size)
-                self.save_config()
-                self.log(f"Đã thay đổi DeepL context window size: {new_size}")
+            self.save_config()
     
     def on_source_lang_change(self, event=None):
         """Handle source language change"""
@@ -2546,7 +2409,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.log(f"Cặp ngôn ngữ {src}->{tgt} chưa hỗ trợ trong MarianMT (sẽ dùng Google)")
         
         self.save_config()
-        self.log(f"Đã thay đổi ngôn ngữ nguồn thành: {self.source_language}")
         
         # Cập nhật handlers với ngôn ngữ mới
         if self.tesseract_handler:
@@ -2608,7 +2470,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             old_engine = self.ocr_engine
             self.ocr_engine = new_engine
             self.save_config()
-            self.log(f"Đã thay đổi OCR engine từ {old_engine} sang {self.ocr_engine}")
             
             # Hiển thị/ẩn Tesseract path dựa trên engine được chọn
             self.update_ocr_engine_ui()
@@ -2622,7 +2483,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection
                     )
-                    self.log("Đã khởi tạo lại Tesseract handler")
                 except Exception as e:
                     log_error("Lỗi khởi tạo Tesseract handler khi chuyển engine", e)
             elif self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
@@ -2654,7 +2514,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Giải phóng EasyOCR reader khi chuyển về Tesseract (chỉ nếu không dùng handlers)
                 if not self.easyocr_handler and hasattr(self, 'easyocr_reader'):
                     self.easyocr_reader = None
-                    self.log("Đã giải phóng EasyOCR reader")
     
     def update_ocr_engine_ui(self):
         """Cập nhật UI dựa trên OCR engine được chọn"""
@@ -2710,7 +2569,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         use_gpu=self.easyocr_use_gpu,
                         enable_multi_scale=self.easyocr_multi_scale
                     )
-                    self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Handler đã được khởi tạo lại.")
                 except Exception as e:
                     log_error(f"Lỗi khởi tạo EasyOCR handler với GPU option {gpu_option}", e)
                     self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
@@ -2750,10 +2608,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                             use_gpu=self.easyocr_use_gpu,
                             enable_multi_scale=self.easyocr_multi_scale
                         )
-                        self.log(f"Đã khởi tạo EasyOCR handler với Multi-scale: {self.easyocr_multi_scale}.")
                 except Exception as e:
                     log_error(f"Lỗi cập nhật EasyOCR Multi-scale setting", e)
-                    self.log(f"Lỗi cập nhật Multi-scale: {e}.")
     
     def on_tesseract_multi_scale_change(self):
         """Callback khi người dùng thay đổi Tesseract Multi-scale option"""
@@ -2777,10 +2633,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection
                     )
-                    self.log(f"Đã khởi tạo Tesseract handler với Multi-scale: {self.tesseract_multi_scale}.")
             except Exception as e:
                 log_error(f"Lỗi cập nhật Tesseract Multi-scale setting", e)
-                self.log(f"Lỗi cập nhật Multi-scale: {e}.")
     
     def on_tesseract_text_region_change(self):
         """Callback khi người dùng thay đổi Tesseract Text Region Detection option"""
@@ -2804,10 +2658,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection
                     )
-                    self.log(f"Đã khởi tạo Tesseract handler với Text Region Detection: {self.tesseract_text_region_detection}.")
             except Exception as e:
                 log_error(f"Lỗi cập nhật Tesseract Text Region Detection setting", e)
-                self.log(f"Lỗi cập nhật Text Region Detection: {e}.")
     
     def initialize_easyocr_reader(self):
         """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers"""
@@ -2958,7 +2810,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             if not self.overload_detected:
                 self.current_scan_interval = self.base_scan_interval
             self.save_config()
-            self.log(f"Đã thay đổi khoảng thời gian cập nhật thành: {interval_ms}ms")
         except ValueError as e:
             log_error("Invalid update interval value", e)
             self.log("Giá trị khoảng thời gian không hợp lệ")
@@ -3179,7 +3030,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 except Exception as e:
                     log_error("Error recreating overlay after reset", e)
             
-            self.log("Đã đặt lại cài đặt giao diện dịch và thời gian cập nhật về mặc định")
             messagebox.showinfo(
                 "Đặt Lại Thành Công", 
                 "Đã đặt lại các cài đặt sau về mặc định:\n\n"
@@ -3272,7 +3122,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 if current_translation and current_translation != "Đang chờ văn bản...":
                     self.update_overlay(current_original, current_translation)
             
-            self.log("Đã áp dụng cài đặt giao diện")
         except ValueError as e:
             log_error("Invalid overlay setting value", e)
             self.log(f"Giá trị cài đặt giao diện không hợp lệ: {e}")
@@ -3341,8 +3190,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         self.capture_thread.start()
         self.ocr_thread.start()
         self.translation_thread.start()
-        
-        self.log("Đã bắt đầu dịch với kiến trúc đa luồng!")
     
     def stop_translation(self):
         """Stop the translation process - dừng tất cả 3 threads"""
@@ -3447,8 +3294,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
             except Exception as e:
                 log_error("Error destroying overlay window", e)
             self.overlay_window = None
-        
-        self.log("Đã dừng dịch.")
     
     def _periodic_cleanup(self):
         """Periodic cleanup cho long sessions - giảm memory leak"""
@@ -4814,11 +4659,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 ocr_proc_start_time = time.monotonic()
                 last_ocr_proc_time = ocr_proc_start_time
                 
-                # Convert img sang numpy array ngay để dùng cho OCR và deduplicator
-                # CRITICAL: Phải convert trước để tránh lỗi threading với Tkinter
                 img_np = np.array(img) if img is not None else None
                 
-                # OCR - sử dụng handlers nếu có, fallback về code cũ
                 text = ""
                 try:
                     if self.ocr_engine == "tesseract" and self.tesseract_handler:
@@ -4933,14 +4775,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 if self.is_text_stable(text):
                     stable_text = text
                     
-                    # CRITICAL FIX: Sử dụng Advanced Deduplicator thay vì simple text comparison
-                    # Giải quyết:
-                    # - Same scene, different dialogue → skip (FIXED: hash text region only)
-                    # - Different scene, same dialogue → duplicate (FIXED: text + image similarity)
-                    # - Short dialogue bị skip (FIXED: relaxed similarity for short text)
                     try:
-                        # img_np đã được convert ở đầu OCR processing
-                        # Check duplicate với image context
                         is_dup, dup_reason = self.advanced_deduplicator.is_duplicate(
                             stable_text, 
                             img_np,
@@ -4948,13 +4783,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         )
                         
                         if is_dup:
-                            log_debug(f"Skipping duplicate: {dup_reason} - '{stable_text[:50]}...'")
                             self.last_successful_translation_time = now
                             continue
-                        
-                        # Log reason cho debugging
-                        if dup_reason in ['new_content', 'repeated_dialogue_different_scene']:
-                            log_debug(f"Processing: {dup_reason} - '{stable_text[:50]}...'")
                     except Exception as dedup_err:
                         log_error("Error in advanced deduplication, continuing anyway", dedup_err)
                         # Fallback: compare với last_processed_subtitle (old method)
@@ -5227,7 +5057,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                                             )
                                             duration = time.time() - start_time
                                             if chunk_translated and not chunk_translated.startswith("Error:"):
-                                                log_debug(f"[MarianMT] Chunk translated in {duration*1000:.0f}ms: {len(chunk)} -> {len(chunk_translated)} chars")
+                                                pass
                                             else:
                                                 log_error(f"[MarianMT] Translation failed: {chunk_translated}", None)
                                         elif self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:

@@ -63,18 +63,15 @@ def post_process_ocr_text_general(text, lang='auto'):
         
         cleaned = text.strip()
         
-        # Bước 1: Apply game-specific fixes
         for error, correction in GAME_OCR_FIXES.items():
             cleaned = cleaned.replace(error, correction)
         
-        # Bước 2: Context-aware fixes
         # Fix "l" at sentence start -> "I"
         cleaned = re.sub(r'^l\s', 'I ', cleaned)
         cleaned = re.sub(r'\.\s+l\s', '. I ', cleaned)
         cleaned = re.sub(r'!\s+l\s', '! I ', cleaned)
         cleaned = re.sub(r'\?\s+l\s', '? I ', cleaned)
         
-        # Bước 3: Common Unicode OCR errors
         ocr_errors = {
             '\u201E': '"',  # Double low-9 quotation mark
             '\u2019': "'",  # Right single quotation mark
@@ -100,18 +97,14 @@ def post_process_ocr_text_general(text, lang='auto'):
                 for error, correction in english_ocr_fixes.items():
                     cleaned = re.sub(r'\b' + re.escape(error) + r'\b', correction, cleaned, flags=re.IGNORECASE)
         
-        # Apply Unicode fixes
         for error, correction in ocr_errors.items():
             cleaned = cleaned.replace(error, correction)
         
-        # Bước 4: Sentence reconstruction
         # Fix broken sentences (missing space after punctuation)
         cleaned = re.sub(r'([.!?])([A-Z])', r'\1 \2', cleaned)
         
-        # Bước 5: Preserve newlines, only collapse multiple spaces/tabs
         cleaned = re.sub(r'[ \t]+', ' ', cleaned)
         
-        # Bước 6: Fix common punctuation issues
         # Remove space before punctuation
         cleaned = re.sub(r'\s+([,.!?;:])', r'\1', cleaned)
         # Add space after punctuation if missing
@@ -185,10 +178,8 @@ def post_process_ocr_for_game_subtitle(text):
         
         cleaned = text.strip()
         
-        # Bước 1: Apply general fixes first
         cleaned = post_process_ocr_text_general(cleaned, lang='eng')
         
-        # Bước 2: Character name detection và formatting
         # Detect pattern: NAME: dialogue
         name_match = re.search(r'^([A-Za-z][A-Za-z\s\-\']{0,30}):\s*(.+)', cleaned)
         if name_match:
@@ -211,16 +202,13 @@ def post_process_ocr_for_game_subtitle(text):
             
             cleaned = f"{character_name}: {dialogue}"
         
-        # Bước 3: Dialogue-specific fixes
         # Remove action descriptions [brackets] or (parentheses) thường là OCR noise
         cleaned = re.sub(r'\[[^\]]{1,3}\]', '', cleaned)  # Remove short bracketed text
         cleaned = re.sub(r'\([^\)]{1,3}\)', '', cleaned)  # Remove short parenthesized text
         
-        # Bước 4: Fix ellipsis patterns
         cleaned = re.sub(r'\.{2,}', '...', cleaned)  # Normalize ellipsis
         cleaned = cleaned.replace('…', '...')
         
-        # Bước 5: Quote handling
         # Ensure quotes are balanced
         quote_count = cleaned.count('"')
         if quote_count % 2 != 0:  # Odd number of quotes
@@ -228,15 +216,12 @@ def post_process_ocr_for_game_subtitle(text):
             if cleaned.endswith('"'):
                 cleaned = cleaned[:-1]
         
-        # Bước 6: Remove noise characters at boundaries
         # More aggressive than general function
         cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}', '', cleaned)
         cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}$', '', cleaned)
         
-        # Bước 7: Clean up whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned)
         
-        # Bước 8: Capitalize first letter after speaker name or start
         if ':' in cleaned:
             parts = cleaned.split(':', 1)
             if len(parts) == 2:

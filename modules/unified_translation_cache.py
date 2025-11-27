@@ -28,7 +28,6 @@ class UnifiedTranslationCache:
         self._cache = {}
         self._access_times = {}  # For LRU eviction
         
-        # Statistics tracking
         self._hits = 0
         self._misses = 0
         self._stores = 0
@@ -104,16 +103,12 @@ class UnifiedTranslationCache:
             
             with self.lock:
                 if cache_key in self._cache:
-                    # Update access time for LRU
                     self._access_times[cache_key] = time.time()
                     translation = self._cache[cache_key]
                     self._hits += 1
-                    
-                    log_debug(f"Unified cache HIT: {provider} {source_lang}->{target_lang}")
                     return translation
                 
                 self._misses += 1
-                log_debug(f"Unified cache MISS: {provider} {source_lang}->{target_lang}")
                 return None
         except Exception as e:
             log_error("Error getting translation from unified cache", e)
@@ -146,8 +141,6 @@ class UnifiedTranslationCache:
                 self._cache[cache_key] = translation
                 self._access_times[cache_key] = time.time()
                 self._stores += 1
-                
-                log_debug(f"Unified cache STORE: {provider} {source_lang}->{target_lang}")
         except Exception as e:
             log_error("Error storing translation in unified cache", e)
     

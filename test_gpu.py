@@ -1,6 +1,6 @@
 """
-Script để test GPU detection và EasyOCR GPU mode
-Chạy: python test_gpu.py
+Script to test GPU detection and EasyOCR GPU mode
+Run: python test_gpu.py
 """
 import sys
 import os

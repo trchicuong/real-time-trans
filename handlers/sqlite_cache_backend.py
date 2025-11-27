@@ -62,7 +62,6 @@ class SQLiteCacheBackend:
         # Thread lock cho thread-safe operations
         self.lock = threading.Lock()
         
-        # Statistics
         self.stats = {
             'memory_hits': 0,
             'db_hits': 0,
@@ -70,7 +69,6 @@ class SQLiteCacheBackend:
             'writes': 0
         }
         
-        # Initialize database
         self._initialize_db()
     
     def _initialize_db(self):
@@ -79,7 +77,6 @@ class SQLiteCacheBackend:
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
-            # Create table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS translation_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

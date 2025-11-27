@@ -1,26 +1,13 @@
-"""
-Batch Translation Utilities
-Optimizes translation by processing multiple sentences in a single API call
-"""
+"""Batch Translation Utilities"""
 import re
 from .logger import log_debug, log_error
 
 def split_into_sentences(text, max_sentences_per_batch=10):
-    """
-    Split text into sentences for batch translation.
-    
-    Args:
-        text: Text to split
-        max_sentences_per_batch: Maximum sentences per batch
-    
-    Returns:
-        List of sentence lists (batches)
-    """
+    """Tách text thành các câu"""
     try:
         if not text or len(str(text).strip()) < 2:
             return []
         
-        # Ensure text is string
         if not isinstance(text, str):
             text = str(text) if text else ""
             if not text or len(text.strip()) < 2:
