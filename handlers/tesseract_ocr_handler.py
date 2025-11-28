@@ -48,7 +48,8 @@ class TesseractOCRHandler:
         if mode == 'subtitle':
             return '--psm 7 --oem 3 -c preserve_interword_spaces=1'
         elif mode == 'gaming':
-            return '--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;()[]-_\'"/\\$%&@ '
+            # Thêm emotion markers: [, ], (, ), *, ~ vào whitelist
+            return '--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;()[]{}*~-_\'"/<>\\$%&@+= '
         elif mode == 'document':
             return '--psm 3 --oem 3'
         else:
@@ -457,12 +458,12 @@ class TesseractOCRHandler:
             # Medium complexity - giữ nguyên
             return base_threshold
     
-    def recognize(self, img_cv_bgr, prep_mode='adaptive', block_size=41, c_value=-60, confidence_threshold=50):
+    def recognize(self, img_cv_bgr, prep_mode='adaptive', block_size=41, c_value=-60, confidence_threshold=40):
         """
         Main OCR method với optimizations:
         - Intelligent multi-scale processing
         - Text region detection
-        - Adaptive confidence thresholds
+        - Adaptive confidence thresholds (giảm xuống 40 để không bỏ sót text ngắn)
         """
         try:
             processed_cv_img = self.preprocess_for_ocr(img_cv_bgr, prep_mode, block_size, c_value)
@@ -551,7 +552,15 @@ class TesseractOCRHandler:
                 text, _, _ = self.ocr_region_with_confidence(
                     processed_cv_img, full_img_region, confidence_threshold, scale_factor=1.0
                 )
-                return text
+                
+                # Basic text normalization trước khi return
+                if text:
+                    import re
+                    # Collapse multiple spaces
+                    text = re.sub(r'\s+', ' ', text)
+                    text = text.strip()
+                
+                return text if text else ""
         except Exception as e:
             log_error(f"Error in Tesseract OCR recognize (prep_mode={prep_mode})", e)
             return ""

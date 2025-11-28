@@ -37,31 +37,27 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
       - Preset sẽ tự động cập nhật giá trị này
    
    3. ENGINE OCR:
-      - Tesseract: Mặc định, CPU thấp (dùng cho nhu cầu phổ thông)
-      - EasyOCR: Chính xác hơn, tốn CPU/GPU hơn (khuyến nghị cho game)
+      - Tesseract: Mặc định, nhanh, CPU thấp (dùng cho nhu cầu phổ thông)
+      - EasyOCR: Chính xác hơn, CPU-only mode (khuyến nghị cho game AAA với text nhỏ/phức tạp)
       - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
    
    4. EASYOCR MODE (chỉ khi chọn EasyOCR):
-      - Tự động: Tự chọn CPU/GPU (khuyến nghị)
-      - CPU: Tiết kiệm GPU
-      - GPU: Nhanh hơn, giảm tải CPU (cần NVIDIA GPU)
+      - CPU-only mode (tối ưu nhất cho real-time gaming)
+      - Không dùng GPU vì CPU performance ổn định và tốt hơn cho gaming subtitle
    
    4a. EASYOCR MULTI-SCALE (chỉ khi chọn EasyOCR):
       - Tăng độ chính xác nhưng chậm hơn 2-3 lần
+      - Không khuyến nghị cho gaming (dùng cho static images/documents)
    
    4b. TESSERACT OPTIONS (chỉ khi chọn Tesseract):
-      - Multi-scale: Tăng độ chính xác, chậm hơn 1.5-2 lần
-      - Text Region Detection: Phát hiện vùng text trước, hữu ích với ảnh phức tạp
+      - Multi-scale: Tăng độ chính xác, chậm hơn 1.5-2 lần (không khuyến nghị cho gaming)
+      - Text Region Detection: Phát hiện vùng text trước (hữu ích với ảnh phức tạp, chậm hơn ~10-30ms)
    
    5. NGÔN NGỮ ĐÍCH: Chọn ngôn ngữ muốn dịch sang
    
    6. DỊCH VỤ DỊCH THUẬT:
       - Google Translate: Miễn phí, nhanh
       - DeepL: Chất lượng cao, cần API key (https://www.deepl.com/pro-api)
-      - MarianMT (local): Dịch cục bộ, NHANH NHẤT (50-200ms), không cần internet sau khi tải model lần đầu
-        * Hỗ trợ GPU tự động (NVIDIA), fallback CPU
-        * Tải model lần đầu: ~300MB, mất 1-5 phút
-        * Hỗ trợ 14 cặp ngôn ngữ: en↔vi, en↔ja, en↔ko, en↔zh, en↔de, en↔fr, en↔es
    
    7. DEEPL CONTEXT WINDOW (chỉ khi chọn DeepL):
       - Số subtitle trước đó dùng làm ngữ cảnh (0-3, mặc định: 2)
@@ -70,9 +66,8 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
 BƯỚC 3: Tùy chỉnh giao diện (Tab "Giao Diện Dịch")
    1. CẤU HÌNH NHANH (PRESET):
       - "Tối Ưu Tốc Độ": Game có hội thoại nhanh
-      - "Cân Bằng": Hầu hết game/ứng dụng (khuyến nghị)
-      - "Tối Ưu Chất Lượng": Cần đọc kỹ
-      - "Mặc Định": Cài đặt mặc định
+      - "Cân Bằng": Hầu hết game/ứng dụng
+      - "Tối Ưu Chất Lượng": Cần đọc kỹ, text phức tạp
       - ⚠️ Nhấn "Áp Dụng" sau khi chọn preset
    
    2. TÙY CHỈNH THỦ CÔNG: Font, màu sắc, kích thước, độ trong suốt, căn lề, v.v.
@@ -95,20 +90,27 @@ BƯỚC 5: Sử dụng màn hình dịch
 
 3. MẸO SỬ DỤNG
 
-   • PRESET: "Tối Ưu Tốc Độ" cho game nhanh, "Cân Bằng" cho hầu hết trường hợp, "Tối Ưu Chất Lượng" khi cần đọc kỹ
+   • PRESET: 
+     - "Tối Ưu Tốc Độ": Game có hội thoại nhanh (Tesseract, 100ms scan, lime green)
+     - "Cân Bằng": Hầu hết game/ứng dụng (khuyến nghị - EasyOCR CPU-only, 150ms scan, white)
+     - "Tối Ưu Chất Lượng": Cần đọc kỹ, text phức tạp (EasyOCR, 200ms scan, soft white)
    
    • CHỌN VÙNG: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
    
-   • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung. Nếu có NVIDIA GPU → chọn "GPU" mode
+   • ENGINE OCR: 
+     - Tesseract: Nhanh, CPU thấp, tốt cho text rõ ràng
+     - EasyOCR: Chính xác hơn cho Nhật/Hàn/Trung, CPU-only mode tối ưu cho gaming
+     - Multi-scale/Text Region: Tắt cho gaming (chỉ bật khi text rất nhỏ/mờ)
    
    • DỊCH VỤ: 
-     - Google Translate: Miễn phí, ổn định
-     - DeepL: Chất lượng cao (có phí), Context Window = 2 (khuyến nghị)
-     - MarianMT: NHANH NHẤT (50-200ms), dịch offline sau khi tải model, tự động dùng GPU nếu có
+     - Google Translate: Miễn phí, ổn định, nhanh
+     - DeepL: Chất lượng cao (có phí), Context Window = 2 (khuyến nghị cho RPG/dialogue dài)
    
-   • TỐI ƯU: Tắt hiển thị văn bản gốc, dùng font đơn giản (Arial, Helvetica), giảm độ trong suốt nếu cần
-   
-   • KHI CHƠI GAME: Khóa màn hình dịch, dùng preset "Tối Ưu Tốc Độ", đặt màn hình dịch không che gameplay
+   • TỐI ƯU: 
+     - Tắt hiển thị văn bản gốc
+     - Dùng font đơn giản (Arial, Helvetica)
+     - Giảm độ trong suốt nếu cần
+     - Khóa màn hình dịch khi chơi game
 
 4. XỬ LÝ SỰ CỐ
 
@@ -118,9 +120,8 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Kiểm tra ngôn ngữ nguồn đã chọn đúng
    
    • DỊCH KHÔNG HOẠT ĐỘNG:
-     - Kiểm tra kết nối internet (không cần với MarianMT sau khi tải model)
+     - Kiểm tra kết nối internet
      - Nếu dùng DeepL: Kiểm tra API key
-     - Nếu dùng MarianMT: Chờ model tải xong lần đầu (1-5 phút), xem log trong tab Trạng Thái
      - Thử chuyển sang Google Translate
    
    • DỊCH SAI:
@@ -129,11 +130,13 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Đảm bảo văn bản rõ ràng, không mờ
    
    • CHẬM HOẶC LAG:
-     - EasyOCR: Chọn "GPU" mode nếu có NVIDIA GPU
-     - Tăng khoảng thời gian cập nhật (200-300ms)
      - Dùng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
-     - Chọn vùng chụp nhỏ hơn, tắt hiển thị văn bản gốc
-     - Thử chuyển sang Tesseract
+     - Chọn vùng chụp nhỏ hơn (chỉ vùng subtitle, không cần toàn bộ hộp thoại)
+     - Tắt hiển thị văn bản gốc
+     - EasyOCR: CPU-only mode (tối ưu cho gaming, performance ổn định ~6-7 FPS)
+     - Tesseract: Nhanh hơn EasyOCR (~10-20 FPS) nhưng kém chính xác hơn
+     - Tắt Multi-scale và Text Region Detection (không cần cho gaming)
+     - Tăng khoảng thời gian cập nhật (150ms → 200ms hoặc 300ms)
    
    • MÀN HÌNH DỊCH KHÔNG HIỂN THỊ:
      - Kiểm tra không bị di chuyển ra ngoài màn hình
@@ -145,9 +148,11 @@ BƯỚC 5: Sử dụng màn hình dịch
 
 5. LƯU Ý QUAN TRỌNG
 
-   • Cần kết nối internet để dịch
+   • Cần kết nối internet để dịch (Google Translate/DeepL API)
    • Chất lượng dịch phụ thuộc: Độ rõ văn bản, tương phản nền, font, độ chính xác OCR
-   • Tất cả cài đặt được tự động lưu
+   • CPU-only mode: EasyOCR không dùng GPU vì CPU performance tốt hơn cho real-time gaming
+   • Cache: Translation cache lưu trong memory (max 1000 entries), mất khi thoát app
+   • Tất cả cài đặt được tự động lưu vào config.json
    • Nút "Đặt Lại Tất Cả" KHÔNG reset: Vùng chụp, Engine OCR, Dịch vụ, DeepL key
 
 6. NGÔN NGỮ ĐƯỢC HỖ TRỢ

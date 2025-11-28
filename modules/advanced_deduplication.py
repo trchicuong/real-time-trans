@@ -1,4 +1,5 @@
 """Advanced Deduplication - Lọc text trùng lặp nâng cao"""
+import re
 import time
 import difflib
 import numpy as np
@@ -27,7 +28,7 @@ class AdvancedDeduplicator:
     
     def __init__(self, 
                  similarity_threshold=0.85,
-                 short_text_threshold=50,
+                 short_text_threshold=30,
                  time_window=5.0,
                  max_cache_size=20):
         """Khởi tạo deduplicator"""
@@ -97,8 +98,8 @@ class AdvancedDeduplicator:
                 
                 image_similarity = self._compute_image_similarity(image_hash, cached_image_hash)
                 
-                # Image similarity threshold: 0.8 (cho phép slight camera movement)
-                if image_similarity >= 0.8:
+                # Image similarity threshold: 0.75 (cho phép slight camera movement và animation)
+                if image_similarity >= 0.75:
                     # Cả text và image giống → chắc chắn duplicate
                     self.stats['duplicates_found'] += 1
                     return True, f"text_image_similar (text={text_similarity:.2f}, img={image_similarity:.2f})"
@@ -115,9 +116,36 @@ class AdvancedDeduplicator:
         return False, "new_content"
     
     def _compute_text_hash(self, text: str) -> str:
-        """Compute hash của text - dùng lowercase để ignore case"""
+        """Compute hash của text - normalize để ignore case và punctuation variations"""
         import hashlib
-        return hashlib.md5(text.lower().encode('utf-8', errors='ignore')).hexdigest()
+        # Normalize: lowercase, loại bỏ emotion markers và excess punctuation
+        normalized = self._normalize_text_for_comparison(text)
+        return hashlib.md5(normalized.encode('utf-8', errors='ignore')).hexdigest()
+    
+    def _normalize_text_for_comparison(self, text: str) -> str:
+        """Normalize text để so sánh - loại bỏ noise nhưng giữ nội dung chính"""
+        try:
+            # Lowercase
+            normalized = text.lower().strip()
+            
+            # Loại bỏ emotion markers: [action], (sound), **emotion**, *emphasis*
+            normalized = re.sub(r'\[[^\]]+\]|\([^\)]+\)|\*+[^\*]+\*+', '', normalized)
+            
+            # Normalize dấu câu: loại bỏ excess punctuation
+            # "Hi!!!" → "Hi!", "What???" → "What?", "Wait..." → "Wait."
+            normalized = re.sub(r'[!]{2,}', '!', normalized)  # !!! → !
+            normalized = re.sub(r'[?]{2,}', '?', normalized)  # ??? → ?
+            normalized = re.sub(r'[~]{2,}', '~', normalized)  # ~~~ → ~
+            normalized = re.sub(r'\.{2,}', '.', normalized)  # ... → .
+            normalized = re.sub(r'[-]{2,}', '-', normalized)  # -- → -
+            
+            # Loại bỏ whitespace excess
+            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            
+            return normalized
+        except Exception as e:
+            log_error(f"Error normalizing text for comparison", e)
+            return text.lower().strip()
     
     def _compute_text_similarity(self, text1: str, text2: str) -> float:
         """
@@ -125,9 +153,9 @@ class AdvancedDeduplicator:
         Returns: 0.0-1.0 (1.0 = identical)
         """
         try:
-            # Normalize: lowercase, strip whitespace
-            t1 = text1.lower().strip()
-            t2 = text2.lower().strip()
+            # Normalize text để loại bỏ emotion markers và excess punctuation
+            t1 = self._normalize_text_for_comparison(text1)
+            t2 = self._normalize_text_for_comparison(text2)
             
             # Dùng SequenceMatcher
             matcher = difflib.SequenceMatcher(None, t1, t2)

@@ -7,29 +7,33 @@ Tool Python mã nguồn mở dịch văn bản thời gian thực trên màn hì
 - 🚀 Đa luồng xử lý (capture, OCR, translation)
 - 🔄 2 Engine OCR:
   - **Tesseract** (miễn phí, nhanh) với multi-scale và text region detection
-  - **EasyOCR** (neural network, chính xác hơn) với GPU acceleration và multi-scale
-- 🎮 GPU acceleration cho EasyOCR (tự động phát hiện + GPU memory management + anti-stutter)
-- 🌐 3 Dịch vụ dịch: Google Translate (miễn phí), DeepL (chất lượng cao), MarianMT (cục bộ offline)
-- 💾 Cache thông minh: SQLite backend (indexed), LRU cache và preset cache
-- ⚡ Tối ưu hiệu suất: Intelligent preprocessing, advanced deduplication, adaptive intervals, batch translation
+  - **EasyOCR** (neural network, chính xác hơn) với CPU-only mode tối ưu cho gaming
+- ⚡ CPU-only mode: Tối ưu cho real-time gaming với hiệu suất ổn định
+- 🌐 2 Dịch vụ dịch: Google Translate (miễn phí), DeepL (chất lượng cao)
+- 💾 Cache đơn giản: In-memory dict cache (max 1000 entries, LRU eviction)
+- ⚡ Tối ưu hiệu suất: Perceptual hashing, adaptive throttling, batch translation, CPU-only mode
 - ⌨️ Global Hotkeys: Phím tắt toàn cục tùy chỉnh (Windows/macOS/Linux)
 
-### 🆕 Cập nhật v1.2.1
+### 🆕 Cập nhật v1.3.0
 
-**OCR Engine Improvements**:
+**Major Performance Optimization & Text Processing**:
 
-- **EasyOCR multi-scale**: Fixed logic để hoạt động đúng khi bật từ UI (test 3 scales: 0.7x, 1.0x, 1.3x)
-- **Tesseract text region detection**: Implemented để hoạt động thật sự khi bật (tách vùng text → OCR từng vùng → merge)
-- **Tesseract multi-scale**: Đã hoạt động (intelligent scale selection: 1-3 scales dựa trên blur/size analysis)
-- **Code cleanup**: Loại bỏ comments thừa, đơn giản hóa logic, không thêm thư viện mới
-- **Logging**: Cleaned up log spam, optimized file sizes, UI status tab không spam nữa
+- **CPU-only mode**: EasyOCR forced CPU mode - better real-time performance than GPU for gaming
+- **Emotion markers support**: Preserves [action], **emotion**, (sound), ~ markers in game dialogues
+- **Smart text processing**: Fragment detection, em dash normalization, punctuation handling
+- **Advanced deduplication**: Hybrid text+image similarity with normalized comparison
+- **Removed MarianMT**: Simplified to Google Translate + DeepL only (faster, more reliable)
+- **Simplified cache**: Single in-memory dict cache (no disk I/O overhead)
+- **Immediate translation**: stable_threshold=1 (no warmup delay) - catches short dialogues
+- **Optimized throttling**: 0.15s intervals = 6-7 FPS (responsive for dialogue)
+- **Perceptual hashing**: imagehash library for better duplicate detection
+- **Text normalization**: Basic normalization in handlers, advanced in post-processing
 
 ## Yêu Cầu
 
 - Python 3.8+
 - Tesseract OCR (bắt buộc)
-- EasyOCR (tùy chọn - độ chính xác cao hơn)
-- MarianMT (tùy chọn - dịch offline)
+- EasyOCR (tùy chọn - độ chính xác cao hơn, CPU-only mode)
 
 ### Cài Đặt Tesseract OCR
 
@@ -46,31 +50,29 @@ Tool Python mã nguồn mở dịch văn bản thời gian thực trên màn hì
 git clone https://github.com/trchicuong/real-time-trans.git
 cd real-time-trans
 
-# Cài đặt dependencies cơ bản
+# Cài đặt dependencies
 pip install -r requirements.txt
 
 # (Tùy chọn) EasyOCR cho độ chính xác cao hơn
 pip install easyocr
 
-# (Tùy chọn) GPU support cho EasyOCR (Windows)
-install_pytorch_cuda.bat
-# Hoặc thủ công:
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-
 # (Tùy chọn) DeepL API
 pip install deepl
-
-# (Tùy chọn) MarianMT cho dịch offline
-pip install transformers>=4.18.0 torch>=1.10.0 sentencepiece>=0.1.96
-# GPU (khuyến nghị cho MarianMT):
-pip install torch --index-url https://download.pytorch.org/whl/cu130
 ```
 
-**Lưu ý**: Nếu Tesseract không có trong PATH, cấu hình trong UI hoặc set `pytesseract.pytesseract.tesseract_cmd` trong code.
+**Lưu ý**:
+
+- EasyOCR sẽ tự động cài PyTorch (CPU version)
+- Tesseract OCR cần cài riêng (xem phần dưới)
+- Nếu Tesseract không có trong PATH, cấu hình trong UI hoặc set `pytesseract.pytesseract.tesseract_cmd` trong code
 
 ## Sử Dụng
 
 ```bash
+# Test dependencies trước
+python test_dependencies.py
+
+# Chạy ứng dụng
 python translator.py
 ```
 
@@ -95,15 +97,12 @@ Xem `HUONG_DAN.txt` để biết hướng dẫn chi tiết cho người dùng cu
 
 Cài đặt được lưu tự động vào `config.json` (vùng chụp, ngôn ngữ, engine OCR, dịch vụ, giao diện, hotkeys, v.v.).
 
-### Cache Files
+### Log Files
 
-- `cache/translations.db`: SQLite cache database (primary, auto-created, B-tree indexed)
-- `translation_cache.txt`: File-based cache (legacy fallback)
-- `preset_cache.txt`: Preset cache (bundle vào exe, tự động extract)
 - `error_log.txt`: Runtime error logs với full traceback (gửi file này khi báo lỗi)
 - `translator_debug.log`: Debug logs (info messages, có thể tắt trong settings)
 
-**Lưu ý**: Unified translation cache (LRU) được lưu trong memory. Có thể chỉnh sửa `preset_cache.txt` để thêm các bản dịch phổ biến.
+**Lưu ý**: Translation cache chỉ lưu trong memory (dict with max 1000 entries, LRU eviction). Cache sẽ mất khi thoát app.
 
 ## Packaging
 
@@ -138,15 +137,12 @@ python package.py
 
 - Kiểm tra kết nối internet (Google/DeepL)
 - Tool tự động retry khi gặp rate limit
-- Thử dùng MarianMT để dịch offline
 
 ### Hiệu suất
 
-- **EasyOCR CPU cao (70-90%)**: Cài PyTorch với CUDA (`install_pytorch_cuda.bat`)
-- **GPU stuttering trong game**: Đã tối ưu: VRAM monitoring, aggressive cache cleanup, dynamic throttling
-- Tăng scan interval (200ms → 500ms), giảm vùng chụp
+- **EasyOCR CPU cao**: Đã tối ưu CPU-only mode cho real-time gaming
+- Tăng scan interval (100ms → 200ms), giảm vùng chụp
 - Dùng Tesseract nếu không cần độ chính xác cao
-- Dùng MarianMT GPU mode cho dịch nhanh hơn
 
 ### Hotkeys không hoạt động
 
@@ -157,7 +153,7 @@ python package.py
 
 ### EXE không chạy
 
-1. Kiểm tra dependencies: `python test_exe.py`
+1. Kiểm tra dependencies: `python test_dependencies.py`
 2. Build DEBUG: `build.bat` → chọn option 2
 3. Kiểm tra `error_log.txt` để xem lỗi chi tiết
 4. Nguyên nhân thường gặp: Thiếu Tesseract, thiếu VC++ Redistributable, antivirus chặn
@@ -188,69 +184,51 @@ python package.py
 - Tiếng Đức (de)
 - Tiếng Tây Ban Nha (es)
 
-### MarianMT Supported Pairs:
-
-en↔vi, en↔ja, en↔ko, en↔zh, en↔de, en↔fr, en↔es (14 cặp hai chiều)
-
 ## 📁 Cấu Trúc Dự Án
 
 ```
 real-time-trans/
-├── translator.py              # Main file: UI, OCR, translation logic
-├── modules/                   # Utility modules
-│   ├── hotkey_manager.py      # Global hotkeys system
-│   ├── logger.py              # Centralized logging (error_log.txt + debug)
-│   ├── circuit_breaker.py     # Network circuit breaker
-│   ├── ocr_postprocessing.py  # OCR post-processing
-│   ├── text_validator.py      # Text validation
-│   ├── text_normalizer.py     # Text normalization
-│   ├── text_deduplication.py  # Advanced deduplication (SequenceMatcher)
-│   ├── sentence_buffer.py     # Sentence buffering
-│   ├── smart_queue.py         # Smart queue management
-│   ├── rate_limiter.py        # Rate limiting
-│   ├── translation_continuity.py # Translation continuity
-│   ├── unified_translation_cache.py # LRU cache
-│   ├── batch_translation.py   # Batch translation
-│   ├── deepl_context.py       # DeepL context manager
-│   └── advanced_deduplication.py # Image hash + text similarity
-├── handlers/                  # OCR và cache handlers
-│   ├── marianmt_handler.py    # MarianMT local translation (offline neural MT)
-│   ├── tesseract_ocr_handler.py # Tesseract với multi-scale + text region detection
-│   ├── easyocr_handler.py     # EasyOCR với GPU optimization + multi-scale
-│   ├── cache_manager.py       # Hybrid cache manager (SQLite + file)
-│   └── sqlite_cache_backend.py # SQLite backend (indexed, WAL mode)
-├── test_marianmt.py           # MarianMT test suite (imports, model loading, translation)
-├── test_easyocr_cpu_gpu.py    # CPU vs GPU comparison test cho EasyOCR
-├── test_exe.py                # Dependency checker
-├── test_gpu.py                # GPU checker
-├── package.py                 # Auto build + package script
-├── build.bat                  # Windows build script
-├── build.spec                 # PyInstaller config
-├── install_pytorch_cuda.bat   # PyTorch CUDA installer
-├── requirements.txt           # All dependencies
-├── preset_cache.txt           # Preset translations (bundled vào exe)
-├── config.json                # User settings (auto-saved)
-├── error_log.txt              # Runtime errors với traceback
-├── translator_debug.log       # Debug logs (có thể tắt)
-├── cache/                     # Cache directory
-│   └── translations.db        # SQLite cache database
-├── marian_models_cache/       # MarianMT models (auto-downloaded)
-├── README.md                  # Developer documentation
-├── HUONG_DAN.txt              # User guide (Vietnamese)
+├── translator.py # Main file: UI, OCR, translation logic (~5200 lines)
+├── modules/ # Utility modules (9 files)
+│ ├── logger.py # Centralized logging (error_log.txt + debug)
+│ ├── circuit_breaker.py # Network circuit breaker (~200 lines)
+│ ├── ocr_postprocessing.py # OCR post-processing with emotion markers (~284 lines)
+│ ├── batch_translation.py # Batch translation for long text (~235 lines)
+│ ├── deepl_context.py # DeepL context window manager (~185 lines)
+│ ├── text_validator.py # Dialogue-aware text validation (~287 lines)
+│ ├── advanced_deduplication.py # Hybrid text+image dedup (~265 lines)
+│ ├── hotkey_manager.py # Global hotkeys system (~150 lines)
+│ └── __init__.py # Package exports
+├── handlers/ # OCR handlers (3 files)
+│ ├── tesseract_ocr_handler.py # Tesseract with optimizations (~602 lines)
+│ ├── easyocr_handler.py # EasyOCR CPU-only + adaptive (~716 lines)
+│ └── __init__.py # Handler exports
+├── test_dependencies.py # Dependency checker (all-in-one)
+├── package.py # Auto build + package script
+├── build.bat # Windows build script
+├── build.spec # PyInstaller config
+├── requirements.txt # All dependencies
+├── config.json # User settings (auto-saved)
+├── error_log.txt # Runtime errors with traceback
+├── translator_debug.log # Debug logs (can be disabled)
+├── README.md # Developer documentation
+├── HUONG_DAN.txt # User guide
 └── LICENSE
 ```
 
 ### File Chính
 
-- **`translator.py`**: Main UI với multi-threading (3 threads), DPI-aware region selector, 6 hotkey actions, auto-save config
-- **`modules/`**: Text processing (validator, normalizer, deduplication), performance (buffer, queue, rate limiter, batch), infrastructure (logger, circuit breaker, cache), features (continuity, DeepL, hotkey manager)
-- **`handlers/`**:
-  - **Tesseract**: Intelligent preprocessing, multi-scale (1-3), text region detection
-  - **EasyOCR**: GPU management, anti-stutter, multi-scale (0.7x/1.0x/1.3x)
-  - **MarianMT**: Local neural MT, GPU/CPU auto, 14 pairs
-  - **Cache**: Hybrid (SQLite + file), indexed B-tree, thread-safe
-- **Test scripts**: `test_marianmt.py`, `test_easyocr_cpu_gpu.py`, `test_exe.py`, `test_gpu.py`
-- **Build tools**: `build.bat` (interactive), `package.py` (auto), `build.spec` (config)
+- **`translator.py`** (~5200 dòng): File chính chứa UI và logic xử lý, 8 threads, cache 1000 entries
+- **`modules/`** (8 modules + 1 **init**):
+  - Text processing: `ocr_postprocessing.py`, `text_validator.py`
+  - Translation: `batch_translation.py`, `deepl_context.py`
+  - Optimization: `advanced_deduplication.py`, `circuit_breaker.py`
+  - System: `logger.py`, `hotkey_manager.py`
+- **`handlers/`** (2 handlers + 1 **init**):
+  - `tesseract_ocr_handler.py`: Fast, multi-scale, text region detection
+  - `easyocr_handler.py`: Accurate, CPU-only, adaptive throttling, fast path
+- **`test_dependencies.py`**: Kiểm tra tất cả dependencies
+- **`build.bat`, `package.py`, `build.spec`**: Công cụ build exe
 
 ## 🛠️ Development
 
@@ -265,19 +243,8 @@ venv\Scripts\activate  # Windows
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: GPU support
-install_pytorch_cuda.bat  # Windows với CUDA 13.0
-# Hoặc: pip install torch --index-url https://download.pytorch.org/whl/cu130
-
 # Test dependencies
-python test_exe.py      # Check all dependencies
-python test_gpu.py      # Check GPU availability
-
-# Test OCR engines
-python test_easyocr_cpu_gpu.py  # Compare CPU vs GPU performance
-
-# Test MarianMT (optional)
-python test_marianmt.py
+python test_dependencies.py  # Check all dependencies
 
 # Run application
 python translator.py
@@ -285,32 +252,6 @@ python translator.py
 # Build executable
 build.bat               # Windows (interactive: Release/Debug)
 # hoặc: python package.py  # Auto build + zip packaging
-```
-
-**OCR Testing:**
-
-```bash
-# Test EasyOCR CPU vs GPU stability
-python test_easyocr_cpu_gpu.py
-# Output: Stability %, average time, FPS
-
-# Adjust GPU memory (nếu gặp OOM):
-# Edit handlers/easyocr_handler.py:
-# - gpu_cache_clear_interval (default: 20 frames)
-# - max_size resolution (default: 800px, pressure: 700px)
-```
-
-**Building:**
-
-```bash
-# Debug build (console window visible)
-build.bat → chọn option 2
-
-# Release build (no console)
-build.bat → chọn option 1
-
-# Auto package
-python package.py  # Build + tạo zip trong dist/
 ```
 
 ## 🤝 Đóng góp
@@ -332,24 +273,30 @@ Mọi thông tin khác, bạn có thể liên hệ với tôi qua:
 - [Pillow](https://python-pillow.org/) - PIL License
 - [mss](https://github.com/BoboTiG/python-mss) - MIT License
 - [EasyOCR](https://github.com/JaidedAI/EasyOCR) - Apache License 2.0 (tùy chọn)
-- [PyTorch](https://pytorch.org/) - BSD License (tùy chọn, cho EasyOCR/MarianMT GPU support)
-- [Helsinki-NLP OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) - Apache License 2.0 (MarianMT models)
-- [Transformers](https://github.com/huggingface/transformers) - Apache License 2.0 (Hugging Face)
+- [PyTorch](https://pytorch.org/) - BSD License (tùy chọn, cho EasyOCR CPU mode)
 - [pynput](https://github.com/moses-palmer/pynput) - LGPL-3.0 (Global hotkeys)
 - [chardet](https://github.com/chardet/chardet) - LGPL License (tùy chọn, cho encoding detection)
 - [DeepL API](https://www.deepl.com/docs-api) - Proprietary (tùy chọn, có phí)
+- [imagehash](https://github.com/JohannesBuchner/imagehash) - BSD License (perceptual hashing)
 
 ### Kiến Trúc
 
-- **Modular design**: OCR handlers (`handlers/`), utilities (`modules/`), main logic (`translator.py`)
-- **Error handling**: Centralized logging (`error_log.txt`) với multiple fallbacks, debug logs riêng
-- **Cache**: Unified LRU cache + SQLite backend (indexed) + file cache + preset cache
-- **Optimization**: Batch translation, circuit breaker, adaptive intervals, GPU support
-- **Hotkeys**: pynput-based global keyboard hooks với thread-safe callbacks
+- **Thiết kế module**: 2 OCR handlers, 8 utility modules, 1 main file (modular, maintainable)
+- **Text processing pipeline**:
+  - OCR → Basic normalization (handlers) → Post-processing (ocr_postprocessing.py)
+  - Advanced features: Emotion markers, fragment detection, dash normalization
+  - Validation: Dialogue-aware (text_validator.py) with pattern recognition
+- **Xử lý lỗi**: Log tập trung vào `error_log.txt`, debug logs riêng, full traceback
+- **Cache**: Dict trong memory, max 1000 entries, LRU eviction, không ghi đĩa
+- **Tối ưu hiệu suất**:
+  - OCR: Fast path, bilateral filter, adaptive throttling, CPU-only mode
+  - Translation: Batch translation, circuit breaker, DeepL context window
+  - Deduplication: Hybrid text+image similarity, perceptual hash, normalized comparison
+- **Hotkeys**: Global keyboard hooks dùng pynput, thread-safe, customizable
 
 ## Lưu Ý
 
 - Yêu cầu kết nối internet cho Google Translate và DeepL
-- MarianMT hoạt động hoàn toàn offline sau khi tải model lần đầu
 - Chất lượng dịch phụ thuộc vào độ chính xác OCR (độ rõ văn bản, tương phản, font, resolution)
 - Hotkeys có thể conflict với phím tắt của ứng dụng khác, hãy tùy chỉnh trong tab "Phím Tắt"
+- CPU-only mode được tối ưu cho real-time gaming, không cần GPU

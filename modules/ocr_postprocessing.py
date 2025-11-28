@@ -105,9 +105,9 @@ def post_process_ocr_text_general(text, lang='auto'):
         
         cleaned = re.sub(r'[ \t]+', ' ', cleaned)
         
-        # Remove space before punctuation
-        cleaned = re.sub(r'\s+([,.!?;:])', r'\1', cleaned)
-        # Add space after punctuation if missing
+        # Remove space before punctuation (including ~ as emotion marker)
+        cleaned = re.sub(r'\s+([,.!?;:~])', r'\1', cleaned)
+        # Add space after punctuation if missing (không thêm sau ~ vì là emotion marker)
         cleaned = re.sub(r'([,.!?;:])([A-Za-z])', r'\1 \2', cleaned)
         
         return cleaned.strip()
@@ -119,6 +119,7 @@ def post_process_ocr_text_general(text, lang='auto'):
 def remove_text_after_last_punctuation_mark(text):
     """
     Remove garbage text after the last punctuation mark
+    Xử lý trường hợp text fragment ở cuối (e.g., "Hi! How are you?. Hi" → "Hi! How are you?")
     
     Args:
         text: Text to process
@@ -148,6 +149,23 @@ def remove_text_after_last_punctuation_mark(text):
         if last_match.group() == ".":
             if end_pos + 2 <= len(text) and text[end_pos:end_pos+2] == "..":
                 end_pos += 2
+        
+        # Lấy phần text sau punctuation cuối
+        remaining_text = text[end_pos:].strip()
+        
+        # Nếu phần còn lại là fragment ngắn (< 15 chars) và không có punctuation
+        # → Coi như garbage (text mới đang xuất hiện)
+        if remaining_text:
+            # Check xem có punctuation trong remaining text không
+            has_punctuation = bool(re.search(r'[.!?]', remaining_text))
+            
+            # Nếu không có punctuation VÀ ngắn (< 15 chars hoặc < 3 words)
+            # → Xóa đi (coi như fragment)
+            if not has_punctuation:
+                word_count = len(remaining_text.split())
+                if len(remaining_text) < 15 or word_count < 3:
+                    # Fragment detected, remove it
+                    return text[:end_pos].strip()
         
         return text[:end_pos]
     except Exception as e:
@@ -202,12 +220,34 @@ def post_process_ocr_for_game_subtitle(text):
             
             cleaned = f"{character_name}: {dialogue}"
         
-        # Remove action descriptions [brackets] or (parentheses) thường là OCR noise
-        cleaned = re.sub(r'\[[^\]]{1,3}\]', '', cleaned)  # Remove short bracketed text
-        cleaned = re.sub(r'\([^\)]{1,3}\)', '', cleaned)  # Remove short parenthesized text
+        # Xử lý emotion markers trong game dialogue - GIỮ NGUYÊN nhưng chuẩn hóa format
+        # [action], (sound), **emotion** → Chuẩn hóa spacing và format
         
-        cleaned = re.sub(r'\.{2,}', '...', cleaned)  # Normalize ellipsis
-        cleaned = cleaned.replace('…', '...')
+        # Chuẩn hóa brackets/parentheses spacing: [text] → [text], ( text ) → (text)
+        cleaned = re.sub(r'\[\s+', '[', cleaned)  # Remove space after [
+        cleaned = re.sub(r'\s+\]', ']', cleaned)  # Remove space before ]
+        cleaned = re.sub(r'\(\s+', '(', cleaned)  # Remove space after (
+        cleaned = re.sub(r'\s+\)', ')', cleaned)  # Remove space before )
+        
+        # Chuẩn hóa asterisks: ** text ** → **text**
+        cleaned = re.sub(r'\*+\s+', '**', cleaned)  # **  text → **text
+        cleaned = re.sub(r'\s+\*+', '**', cleaned)  # text  ** → text**
+        
+        # Ensure space sau emotion markers nếu theo sau là text
+        cleaned = re.sub(r'\]([A-Za-z])', r'] \1', cleaned)  # ]Text → ] Text
+        cleaned = re.sub(r'\)([A-Za-z])', r') \1', cleaned)  # )Text → ) Text
+        cleaned = re.sub(r'\*\*([A-Za-z])', r'** \1', cleaned)  # **Text → ** Text
+        
+        # Normalize leading dash: "- Text", "— Text", "– Text" → "- Text" (ensure single space)
+        cleaned = re.sub(r'^[-—–]\s+', '- ', cleaned)  # Normalize all dash types at start
+        cleaned = re.sub(r'^[-—–]([A-Za-z])', r'- \1', cleaned)  # Add space if missing: "-Text" → "- Text"
+        
+        # Normalize ellipsis (...) - giữ nguyên vị trí nhưng chuẩn hóa format
+        cleaned = re.sub(r'\.{2,}', '...', cleaned)  # 2+ dots → ...
+        cleaned = cleaned.replace('…', '...')  # Unicode ellipsis → ...
+        
+        # Ensure space before ellipsis nếu dính chữ: "sorry..." → "sorry..."(OK), "sorry…" → "sorry..."
+        # Nhưng không thêm space: "I'm so sorry..." vẫn giữ nguyên
         
         # Ensure quotes are balanced
         quote_count = cleaned.count('"')
@@ -216,9 +256,10 @@ def post_process_ocr_for_game_subtitle(text):
             if cleaned.endswith('"'):
                 cleaned = cleaned[:-1]
         
-        # More aggressive than general function
-        cleaned = re.sub(r'^[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}', '', cleaned)
-        cleaned = re.sub(r'[\|\[\]\{\}<>\s\.,;:_\-=+\'"]{1,5}$', '', cleaned)
+        # Clean up excessive leading/trailing whitespace và junk characters (chỉ loại pure junk, giữ emotion markers)
+        # Chỉ xóa trailing junk characters KHÔNG phải là emotion markers hợp lệ
+        cleaned = re.sub(r'^[\|\s\.,;:_=+]+', '', cleaned)  # Leading pure junk (không bao gồm -, *, [, (, ")
+        cleaned = re.sub(r'[\|\s\.,;:_=+]+$', '', cleaned)  # Trailing pure junk
         
         cleaned = re.sub(r'\s+', ' ', cleaned)
         

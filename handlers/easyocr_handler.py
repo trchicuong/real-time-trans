@@ -21,109 +21,57 @@ try:
 except ImportError:
     pass
 
-def detect_gpu_availability():
-    """Phát hiện GPU"""
-    try:
-        import torch
-        debug_info = f"PyTorch version: {torch.__version__}"
-        
-        # Check if CUDA is available
-        if not torch.cuda.is_available():
-            cuda_version = getattr(torch.version, 'cuda', None)
-            if cuda_version:
-                debug_info += f", CUDA version: {cuda_version}, but torch.cuda.is_available() = False"
-            else:
-                debug_info += ", PyTorch installed without CUDA support"
-            log_error(f"[GPU Detection] {debug_info}")
-            return False, None, debug_info
-        
-        gpu_name = torch.cuda.get_device_name(0)
-        cuda_version = getattr(torch.version, 'cuda', 'Unknown')
-        device_count = torch.cuda.device_count()
-        debug_info += f", CUDA version: {cuda_version}, GPU devices: {device_count}, GPU: {gpu_name}"
-        return True, gpu_name, debug_info
-        
-    except ImportError:
-        debug_info = "PyTorch not installed"
-        log_error(f"[GPU Detection] {debug_info}")
-        return False, None, debug_info
-    except Exception as e:
-        debug_info = f"Error detecting GPU: {str(e)}"
-        log_error(f"[GPU Detection] {debug_info}")
-        return False, None, debug_info
-
+# GPU detection removed - CPU-only mode
 
 class EasyOCRHandler:
     """Handler cho EasyOCR với hỗ trợ CPU/GPU"""
     
     def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False):
-        """Khởi tạo handler"""
+        """Khởi tạo handler - CPU-ONLY mode"""
         self.source_language = source_language
         self.reader = None
         self.last_call_time = 0.0
         self.EASYOCR_AVAILABLE = EASYOCR_AVAILABLE
         
-        # Detect GPU availability
-        detected_gpu_available, detected_gpu_name, gpu_debug_info = detect_gpu_availability()
+        # FORCE CPU-ONLY MODE (user confirmed CPU performs better than GPU for EasyOCR)
+        self.gpu_available = False
+        self.gpu_name = None
+        self.gpu_debug_info = "CPU-only mode (forced - better performance than GPU for this use case)"
         
-        # Determine GPU usage based on user preference
-        if use_gpu is True:
-            # Force GPU mode
-            if detected_gpu_available:
-                self.gpu_available = True
-                self.gpu_name = detected_gpu_name
-                self.gpu_debug_info = gpu_debug_info
-            else:
-                self.gpu_available = False
-                self.gpu_name = None
-                self.gpu_debug_info = f"{gpu_debug_info} (GPU requested but not available)"
-        elif use_gpu is False:
-            self.gpu_available = False
-            self.gpu_name = None
-            self.gpu_debug_info = f"{gpu_debug_info} (CPU mode forced by user)"
-        else:
-            self.gpu_available = detected_gpu_available
-            self.gpu_name = detected_gpu_name
-            self.gpu_debug_info = gpu_debug_info
-        
-        # Throttling intervals - giảm xuống để không skip dialogue
-        if self.gpu_available:
-            self.min_call_interval = 0.4  # 2.5 FPS - giảm từ 0.6s
-            self.stable_text_interval = 0.8  # Khi text ổn định
-        else:
-            self.min_call_interval = 0.8  # Giảm từ 1.0s
-            self.stable_text_interval = 1.2
+        # Throttling intervals - CPU-only mode, minimal throttling
+        self.min_call_interval = 0.15  # 6-7 FPS for CPU - balanced for responsiveness
+        self.stable_text_interval = 0.3  # When text is stable, slower polling
         
         # Smart skip: cache last result để skip nếu text giống
         self.last_result_text = ""
         self.last_result_hash = None
         
-        # Text stability tracking
+        # Text stability tracking - MINIMAL buffering for fast response
         self.text_stability_buffer = []
-        self.stability_buffer_size = 2  # Giảm từ 3 để responsive hơn
-        self.text_change_threshold = 0.97  # 97% để tránh skip text mới
+        self.stability_buffer_size = 1  # No buffering - immediate response
+        self.text_change_threshold = 0.90  # 90% - more lenient to catch short dialogues
         
         # Multi-scale processing - có thể bật/tắt từ UI
         self.enable_multi_scale = enable_multi_scale
         
-        # GPU memory optimization - CRITICAL for gaming
+        # Frame counter for stats
         self.frame_count = 0
-        self.gpu_cache_clear_interval = 20  # AGGRESSIVE: Clear mỗi 20 frames (giảm từ 100)
         
-        # GPU Performance Monitoring (detect game rendering load)
+        # CPU Performance Monitoring
         self.last_ocr_durations = []  # Track OCR execution times
-        self.ocr_duration_window = 5   # Track last 5 OCRs
-        self.high_load_threshold = 0.5  # Nếu OCR > 500ms = high load
+        self.ocr_duration_window = 10   # Track last 10 OCRs
+        self.high_load_threshold = 0.5  # OCR > 500ms = high load for CPU
         self.consecutive_high_load = 0  # Counter for consecutive high loads
         
-        # GPU Memory Pressure Detection
-        self.vram_usage_history = []
-        self.vram_check_interval = 10  # Check VRAM every 10 frames
-        self.vram_warning_threshold = 0.85  # 85% VRAM usage = warning
+        # Adaptive processing - dynamically adjust based on actual performance
+        self.adaptive_enabled = True
+        self.target_fps = 6.0  # Target OCR FPS for CPU mode (realistic)
+        self.actual_fps = 0.0  # Measured actual FPS
+        self.fps_samples = []
+        self.fps_window = 20  # Calculate FPS over 20 samples
         
-        # Timeout cho OCR operations (giây) - balance cho cấu hình tầm trung
-        # GPU tầm trung chậm hơn GPU mạnh, CPU tầm trung cần thời gian hơn
-        self.ocr_timeout = 10.0 if self.gpu_available else 15.0
+        # Timeout cho OCR operations (giây) - CPU only
+        self.ocr_timeout = 12.0  # CPU needs more time than GPU
         
         # Max text length để tránh xử lý text quá dài (tăng lên để giữ nhiều text hơn)
         self.max_text_length = 800  # Ký tự (tăng từ 500 để giữ độ chính xác tốt hơn)
@@ -290,47 +238,16 @@ class EasyOCRHandler:
                         
                         os.environ['PYTHONWARNINGS'] = 'ignore'
                         
-                        # Auto-detect GPU và enable GPU mode nếu có
-                        # GPU mode sẽ giảm CPU usage từ 70-90% xuống ~5-15%
-                        use_gpu = self.gpu_available
+                        # FORCE CPU-ONLY MODE (better performance for this use case)
+                        use_gpu = False
                         
-                        # Verify GPU one more time before creating reader
-                        if use_gpu:
-                            try:
-                                import torch
-                                if not torch.cuda.is_available():
-                                    log_error("[WARNING] GPU was detected earlier but torch.cuda.is_available() is now False. Falling back to CPU.")
-                                    use_gpu = False
-                                else:
-                                    torch.cuda.empty_cache()
-                                    os.environ['PYTORCH_ALLOC_CONF'] = 'max_split_size_mb:128'
-                            except Exception as e:
-                                log_error(f"[WARNING] Error verifying GPU before EasyOCR init: {e}. Falling back to CPU.")
-                                use_gpu = False
-                        
-                        # Tối ưu cho long sessions: reuse reader, không reload model
-                        # Cho phép download model tự động nếu chưa có (lần đầu tiên)
+                        # CPU-only EasyOCR reader - no GPU code needed
                         self.reader = easyocr.Reader(
                             [easyocr_lang], 
-                            gpu=use_gpu, 
+                            gpu=False,  # Force CPU
                             verbose=False,
-                            download_enabled=True  # Cho phép download model tự động nếu chưa có
+                            download_enabled=True  # Auto-download model if needed
                         )
-                        
-                        # Verify reader actually using GPU
-                        if use_gpu:
-                            try:
-                                # Try to check if reader is using GPU by checking device
-                                import torch
-                                if torch.cuda.is_available():
-                                    torch.cuda.set_stream(torch.cuda.Stream(priority=-1))
-                                    
-                                    # Force a small operation to see if GPU is used
-                                    test_tensor = torch.zeros(1).cuda()
-                                    del test_tensor
-                                    torch.cuda.empty_cache()
-                            except Exception as e:
-                                log_error(f"GPU init issue: {str(e)}")
                 finally:
                     sys.stderr = old_stderr
                     
@@ -348,28 +265,27 @@ class EasyOCRHandler:
     def recognize(self, img, confidence_threshold=0.3):
         """
         Main OCR method với throttling, preprocessing nâng cao và smart skip
-        ENHANCED: Advanced deduplication, text debouncing, adaptive throttling, GPU pressure detection
+        ENHANCED: Advanced deduplication, text debouncing, adaptive throttling, CPU load detection
         EasyOCR-specific preprocessing khác với Tesseract
         """
         self.stats['total_ocr_calls'] += 1
         
-        # Throttle: EasyOCR rất nặng CPU/GPU, chỉ gọi theo interval
-        # ADAPTIVE: Điều chỉnh interval dựa trên text stability VÀ GPU pressure
+        # Throttle: EasyOCR rất nặng CPU, chỉ gọi theo interval
+        # ADAPTIVE: Điều chỉnh interval dựa trên text stability VÀ CPU load
         now = time.monotonic()
         time_since_last_call = now - self.last_call_time
         
-        gpu_under_pressure = False
-        if self.gpu_available:
-            gpu_under_pressure = self._is_gpu_under_pressure()
-            if gpu_under_pressure:
-                self.consecutive_high_load += 1
-            else:
-                self.consecutive_high_load = 0
+        # CPU load detection (simplified, no GPU)
+        cpu_under_pressure = self._is_cpu_under_pressure()
+        if cpu_under_pressure:
+            self.consecutive_high_load += 1
+        else:
+            self.consecutive_high_load = 0
         
         # Adaptive throttling dựa trên:
         # 1. Text length của last result
         # 2. Text stability (nếu text ổn định → throttle nhiều hơn)
-        # 3. GPU pressure (nếu GPU bận → throttle NHIỀU HƠN để không giựt game)
+        # 3. CPU pressure (nếu CPU bận → throttle hơn để không giựt game)
         last_text_len = len(self.last_result_text) if self.last_result_text else 0
         
         # Base interval dựa trên text length
@@ -387,50 +303,69 @@ class EasyOCRHandler:
         else:
             effective_interval = base_interval
         
-        if gpu_under_pressure:
-            if self.consecutive_high_load >= 3:
-                # GPU consistently under pressure → AGGRESSIVE throttle
-                effective_interval *= 3.0  # 3x throttle
-                # Only log once when entering aggressive mode
-                if self.consecutive_high_load == 3:
-                    log_error(f"[GPU PRESSURE] Aggressive throttling activated")
-            else:
-                # GPU occasionally busy → moderate throttle
-                effective_interval *= 2.0  # 2x throttle
+        # Adaptive throttling based on actual performance
+        # Measure FPS and adjust interval dynamically
+        if self.adaptive_enabled and len(self.fps_samples) >= 3:
+            # Calculate actual FPS
+            if self.fps_samples:
+                avg_interval = sum(self.fps_samples) / len(self.fps_samples)
+                self.actual_fps = 1.0 / avg_interval if avg_interval > 0 else 0
+                
+                # Adjust throttle based on target vs actual FPS
+                if self.actual_fps < self.target_fps * 0.8:
+                    # Running slower than target - reduce interval
+                    effective_interval *= 0.7
+                elif self.actual_fps > self.target_fps * 1.2:
+                    # Running faster than target - increase interval slightly
+                    effective_interval *= 1.1
+        
+        if cpu_under_pressure:
+            if self.consecutive_high_load >= 5:
+                # CPU consistently under pressure → moderate throttle
+                effective_interval *= 1.4  # 1.4x throttle
+                if self.consecutive_high_load == 5:
+                    log_error(f"[CPU PRESSURE] Moderate throttling activated")
+            elif self.consecutive_high_load >= 2:
+                # CPU occasionally busy → light throttle
+                effective_interval *= 1.15  # 1.15x throttle
         
         if time_since_last_call < effective_interval:
             self.stats['skipped_due_to_throttle'] += 1
-            return ""  # Skip call này để giảm CPU/GPU load
+            return ""  # Skip call này để giảm CPU load
         
-        # Smart skip: Check image hash để skip nếu giống frame trước
-        # ENHANCED: Improved hash comparison với perceptual hashing
+        # Smart skip: Use perceptual hash (imagehash) for better duplicate detection
+        # Much better than MD5 for detecting visually similar frames
         try:
-            import hashlib
+            import imagehash
             if isinstance(img, np.ndarray):
                 img_pil = Image.fromarray(img)
             else:
                 img_pil = img
             
-            # Create small hash image for comparison
-            # Resize to small size for faster hash computation
-            w, h = img_pil.size
-            img_small = img_pil.resize((max(1, w//8), max(1, h//8)), Image.Resampling.NEAREST)
+            # Use average hash - fast and good for frame comparison
+            # Perceptual hash detects similar images even with small changes
+            img_hash = str(imagehash.average_hash(img_pil, hash_size=8))
             
-            # Convert to grayscale for better comparison
-            if img_small.mode != 'L':
-                img_small = img_small.convert('L')
-            
-            img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
-            
-            # Skip nếu hash giống (frame không đổi)
+            # Skip nếu hash giống (frame không đổi hoặc rất giống)
             if img_hash == self.last_result_hash:
                 # Frame giống hệt → return cached result ngay
                 return self.last_result_text
             
             self.last_result_hash = img_hash
-        except Exception as e:
-            log_error("Error computing image hash for EasyOCR", e)
-            # Continue nếu hash fail
+        except ImportError:
+            # Fallback to MD5 if imagehash not available
+            try:
+                import hashlib
+                w, h = img_pil.size if hasattr(img_pil, 'size') else (img.shape[1], img.shape[0])
+                img_small = img_pil.resize((max(1, w//8), max(1, h//8)), Image.Resampling.NEAREST)
+                if img_small.mode != 'L':
+                    img_small = img_small.convert('L')
+                img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
+                if img_hash == self.last_result_hash:
+                    return self.last_result_text
+                self.last_result_hash = img_hash
+            except Exception as e:
+                log_error("Error computing image hash", e)
         
         # Khởi tạo reader nếu chưa có
         reader = self._initialize_reader()
@@ -454,38 +389,23 @@ class EasyOCRHandler:
             if not isinstance(img, Image.Image):
                 img_pil = Image.fromarray(img) if isinstance(img, np.ndarray) else img
         
-        # Increment frame counter và periodic GPU cleanup
+        # Increment frame counter for stats
         self.frame_count += 1
-        if self.gpu_available:
-            # Cleanup mỗi 20 frames
-            if self.frame_count % self.gpu_cache_clear_interval == 0:
-                self._cleanup_gpu_memory()
-                
-                # Log VRAM usage nếu cao
-                if self.frame_count % 100 == 0:
-                    used, total, percentage = self._check_vram_usage()
-                    if used is not None and percentage > 0.7:
-                        log_error(f"[VRAM] High usage: {percentage*100:.0f}%")
         
-        # Resize ảnh - AGGRESSIVE downscale cho GPU để giảm VRAM
+        # Resize ảnh - standard resize for CPU mode
         w, h = img_pil.size
         max_dim = max(w, h)
         
-        max_size = 800 if self.gpu_available else 800
-        
-        # Chỉ giảm resolution khi GPU thực sự stressed (>=3 lần liên tục)
-        if self.gpu_available and self.consecutive_high_load >= 3:
-            max_size = 700  # Giảm nhẹ hơn, từ 600->700
-            if self.consecutive_high_load == 3:
-                log_error(f"[GPU PRESSURE] Reducing resolution to 700px")
+        max_size = 800  # Standard max size for CPU
         
         if max_dim > max_size:
             scale = max_size / max_dim
             new_w, new_h = int(w * scale), int(h * scale)
             img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # Multi-scale processing - optimized cho cả CPU và GPU
+        # Multi-scale processing - optimized for CPU
         if self.enable_multi_scale:
+            ocr_start_time = time.monotonic()  # Track start time for multi-scale
             best_result = None
             best_score = 0.0
             
@@ -524,17 +444,34 @@ class EasyOCRHandler:
                     log_error(f"Error in multi-scale processing (scale={scale})", e)
                     continue
             
+            # Track OCR duration and update FPS samples
+            ocr_duration = time.monotonic() - ocr_start_time
+            self.last_ocr_durations.append(ocr_duration)
+            if len(self.last_ocr_durations) > self.ocr_duration_window:
+                self.last_ocr_durations.pop(0)
+            
+            # Track actual call interval for FPS calculation
+            actual_interval = now - self.last_call_time
+            self.fps_samples.append(actual_interval)
+            if len(self.fps_samples) > self.fps_window:
+                self.fps_samples.pop(0)
+            
+            # Update last call time
             self.last_call_time = time.monotonic()
+            
             if best_result:
+                # Basic text normalization
+                best_result = ' '.join(best_result.split())  # Collapse whitespace
+                best_result = best_result.strip()
+                
                 # Giới hạn độ dài text
                 if len(best_result) > self.max_text_length:
                     best_result = best_result[:self.max_text_length] + "..."
                 self.last_result_text = best_result
-                self._cleanup_gpu_memory()
                 return best_result
             return ""
         
-        # Single scale (GPU mode hoặc multi-scale disabled)
+        # Single scale (multi-scale disabled)
         # Convert PIL Image to numpy array cho EasyOCR
         img_array = np.array(img_pil)
         
@@ -572,7 +509,6 @@ class EasyOCRHandler:
             # Check if thread is still alive (timeout occurred)
             if ocr_thread.is_alive():
                 log_error(f"EasyOCR timeout after {self.ocr_timeout}s - skipping this frame")
-                self._cleanup_gpu_memory()
                 return ""
             
             # Get results
@@ -594,17 +530,22 @@ class EasyOCRHandler:
             
             result_text = ' '.join(texts).strip() if texts else ""
             
+            # Basic text normalization
+            if result_text:
+                result_text = ' '.join(result_text.split())  # Collapse whitespace
+                result_text = result_text.strip()
+            
             # Giới hạn độ dài text để tránh xử lý quá tải
             if len(result_text) > self.max_text_length:
                 result_text = result_text[:self.max_text_length] + "..."
             
-            # TEXT DEBOUNCING: Chỉ skip nếu text thực sự giống hệt
+            # TEXT DEBOUNCING: More lenient to avoid skipping short dialogues
             if self.last_result_text and result_text:
                 # Chỉ so sánh nếu text không rỗng
                 if len(result_text) > 0:
                     similarity = self._compute_text_similarity(result_text, self.last_result_text)
-                    # Chỉ skip nếu gần như identical VÀ cùng độ dài
-                    if similarity >= 0.97 and abs(len(result_text) - len(self.last_result_text)) <= 2:
+                    # Skip only if very similar AND exact same length
+                    if similarity >= 0.85 and len(result_text) == len(self.last_result_text):
                         return self.last_result_text
             
             # Cache result (text thực sự khác)
@@ -615,63 +556,34 @@ class EasyOCRHandler:
             if len(self.text_stability_buffer) > self.stability_buffer_size:
                 self.text_stability_buffer.pop(0)
             
-            # Track OCR duration for GPU pressure detection
+            # Track OCR duration for CPU load detection
             ocr_duration = time.monotonic() - ocr_start_time
             self.last_ocr_durations.append(ocr_duration)
             if len(self.last_ocr_durations) > self.ocr_duration_window:
                 self.last_ocr_durations.pop(0)
             
+            # Track actual call interval for FPS calculation
+            actual_interval = now - self.last_call_time
+            self.fps_samples.append(actual_interval)
+            if len(self.fps_samples) > self.fps_window:
+                self.fps_samples.pop(0)
+            
             # Log slow OCRs only if very slow (>1s)
             if ocr_duration > 1.0:
                 log_error(f"[SLOW OCR] {ocr_duration:.1f}s")
             
-            # AGGRESSIVE GPU cleanup after each OCR
-            self._cleanup_gpu_memory()
+            # Update last call time
+            self.last_call_time = time.monotonic()
             
             return result_text
         except Exception as e:
             log_error("Lỗi EasyOCR", e)
-            # Clear GPU memory on error
-            if self.gpu_available:
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
             return ""
     
-    def _check_vram_usage(self):
+    def _is_cpu_under_pressure(self):
         """
-        Check VRAM usage để detect memory pressure
-        Returns: (used_gb, total_gb, percentage)
-        """
-        if not self.gpu_available:
-            return None, None, None
-        
-        try:
-            import torch
-            if torch.cuda.is_available():
-                # Get memory stats
-                allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB
-                reserved = torch.cuda.memory_reserved(0) / (1024**3)    # GB
-                total = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-                
-                # Use reserved memory as the "used" metric (more accurate)
-                used = reserved
-                percentage = (used / total) if total > 0 else 0
-                
-                return used, total, percentage
-        except Exception as e:
-            log_error(f"Error checking VRAM usage: {e}", e)
-            return None, None, None
-    
-    def _is_gpu_under_pressure(self):
-        """
-        Kiểm tra GPU có đang under pressure không (game rendering nhiều)
-        Dựa trên:
-        1. OCR execution time (nếu tăng đột ngột = GPU busy)
-        2. VRAM usage (nếu cao = game đang dùng nhiều)
+        Kiểm tra CPU có đang under pressure không
+        Dựa trên OCR execution time
         """
         # Check recent OCR durations
         if len(self.last_ocr_durations) >= 3:
@@ -679,38 +591,7 @@ class EasyOCRHandler:
             if avg_duration > self.high_load_threshold:
                 return True
         
-        # Check VRAM usage (every N frames)
-        if self.frame_count % self.vram_check_interval == 0:
-            used, total, percentage = self._check_vram_usage()
-            if percentage is not None and percentage > self.vram_warning_threshold:
-                # Only log if not already logged recently (avoid spam)
-                if not hasattr(self, '_last_vram_warning') or (time.monotonic() - self._last_vram_warning) > 30:
-                    log_error(f"[WARNING] High VRAM usage: {percentage*100:.0f}%")
-                    self._last_vram_warning = time.monotonic()
-                return True
-        
         return False
-    
-    def _cleanup_gpu_memory(self):
-        """
-        AGGRESSIVE GPU memory cleanup - gọi định kỳ để tránh memory leak
-        CRITICAL for gaming: Free memory ASAP để game không bị giựt
-        """
-        if not self.gpu_available:
-            return
-        try:
-            import torch
-            if torch.cuda.is_available():
-                # AGGRESSIVE cleanup
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()  # Wait for all operations to complete
-                
-                # Optional: Force garbage collection on GPU tensors
-                import gc
-                gc.collect()
-                torch.cuda.empty_cache()  # Clear again after GC
-        except Exception as e:
-            log_error(f"Error cleaning GPU memory: {e}", e)
     
     def _preprocess_for_easyocr(self, img):
         """

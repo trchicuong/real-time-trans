@@ -81,7 +81,6 @@ from modules import (
     post_process_ocr_text_general,
     remove_text_after_last_punctuation_mark,
     post_process_ocr_for_game_subtitle,
-    UnifiedTranslationCache,
     split_into_sentences,
     translate_batch_google,
     translate_batch_deepl,
@@ -95,22 +94,12 @@ from modules import (
 
 # Handlers cho free OCR engines
 try:
-    from handlers import TesseractOCRHandler, EasyOCRHandler, TranslationCacheManager
+    from handlers import TesseractOCRHandler, EasyOCRHandler
     HANDLERS_AVAILABLE = True
 except ImportError:
     HANDLERS_AVAILABLE = False
     TesseractOCRHandler = None
     EasyOCRHandler = None
-    TranslationCacheManager = None
-
-# MarianMT local translation handler
-MARIANMT_HANDLER_AVAILABLE = False
-MarianMTHandler = None
-try:
-    from handlers.marianmt_handler import MarianMTHandler, MARIANMT_AVAILABLE
-    MARIANMT_HANDLER_AVAILABLE = MARIANMT_AVAILABLE
-except ImportError as e:
-    pass
 
 def get_actual_screen_size():
     """
@@ -263,8 +252,8 @@ class ScreenTranslator:
         self.EASYOCR_AVAILABLE = EASYOCR_AVAILABLE
         self.HANDLERS_AVAILABLE = HANDLERS_AVAILABLE
         
-        # EasyOCR GPU option (None = auto-detect, True = force GPU, False = force CPU)
-        self.easyocr_use_gpu = None  # Default: auto-detect
+        # EasyOCR - CPU-ONLY MODE (user confirmed CPU performs better)
+        self.easyocr_use_gpu = False  # FORCED CPU-only
         
         # EasyOCR Multi-scale option (True = enable, False = disable)
         self.easyocr_multi_scale = False  # Default: disabled (tối ưu tốc độ)
@@ -279,7 +268,7 @@ class ScreenTranslator:
                 enable_multi_scale=self.tesseract_multi_scale,
                 enable_text_region_detection=self.tesseract_text_region_detection
             )
-            self.easyocr_handler = None  # Sẽ khởi tạo khi cần với GPU option
+            self.easyocr_handler = None  # Sẽ khởi tạo khi cần (CPU-only)
         else:
             self.tesseract_handler = None
             self.easyocr_handler = None
@@ -294,13 +283,6 @@ class ScreenTranslator:
         self.use_deepl = False  # Flag to use DeepL instead of Google
         self.deepl_api_key = ""  # DeepL API key
         self.deepl_context_window_size = 2  # Default: 2 previous subtitles (0-3)
-        
-        # MarianMT local translation support
-        self.MARIANMT_AVAILABLE = MARIANMT_HANDLER_AVAILABLE
-        self.use_marianmt = False  # Flag to use MarianMT local translation
-        self.marianmt_handler = None  # Will be initialized if enabled
-        self.marianmt_num_beams = 2  # Beam search value (1-8, higher=better quality)
-        self.marianmt_use_gpu = None  # None=auto, True=force GPU, False=force CPU
         
         # DeepL Context Manager (will be updated after load_config if config exists)
         self.deepl_context_manager = DeepLContextManager(max_context_size=self.deepl_context_window_size)
@@ -335,20 +317,12 @@ class ScreenTranslator:
         self.overlay_word_wrap = True
         
         self.text_history = []
-        self.history_size = 5  # Tăng để track context tốt hơn
+        self.history_size = 3  # Giảm từ 5 → 3 cho faster response
         self.performance_mode = "balanced"
         
-        # Unified Translation Cache (primary cache)
-        self.unified_cache = UnifiedTranslationCache(max_size=2000)
-        
-        # Translation Cache Manager (nếu có handlers) - giữ để backward compatibility
-        if HANDLERS_AVAILABLE and TranslationCacheManager:
-            self.cache_manager = TranslationCacheManager(max_size=2000)
-            self.translation_cache = {}  # Giữ để backward compatibility
-        else:
-            self.cache_manager = None
-            self.translation_cache = {}
-        self.max_cache_size = 10000  # Tăng cache cho game AAA (dialogues lặp lại nhiều, hit rate 70-90%)
+        # Simple cache - chỉ dùng dict thông thường
+        self.translation_cache = {}
+        self.max_cache_size = 1000  # Giới hạn cache để tiết kiệm RAM
         self.pending_translation = None
         self.translation_lock = threading.Lock()
         
@@ -359,7 +333,7 @@ class ScreenTranslator:
         self.prev_ocr_text = ""
         self.last_processed_subtitle = None
         self.last_successful_translation_time = 0.0
-        self.stable_threshold = 2  # Số lần text phải giống nhau để coi là stable
+        self.stable_threshold = 1  # IMMEDIATE translation - no warmup delay!
         self.min_translation_interval = 0.03  # Giảm xuống 0.03s cho response nhanh hơn (cache hits)
         
         # Threading infrastructure
@@ -371,8 +345,8 @@ class ScreenTranslator:
         # EasyOCR: giảm workers để giảm CPU (rất nặng)
         # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
         # Sẽ được điều chỉnh trong start_translation() dựa trên OCR engine
-        self.ocr_thread_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="OCR")
-        self.translation_thread_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="Translation")
+        self.ocr_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="OCR")
+        self.translation_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="Translation")
         
         # Sequence tracking cho chronological ordering
         self.batch_sequence_counter = 0
@@ -396,7 +370,7 @@ class ScreenTranslator:
         
         self.advanced_deduplicator = AdvancedDeduplicator(
             similarity_threshold=0.85,  # 85% similarity = duplicate
-            short_text_threshold=50,    # Text < 50 chars được ưu tiên
+            short_text_threshold=30,    # Text < 30 chars (game dialogue thường ngắn)
             time_window=5.0,            # 5s cache window
             max_cache_size=20           # 20 entries max
         )
@@ -405,9 +379,9 @@ class ScreenTranslator:
         self.cached_prep_mode = None
         self.cached_tess_params = None
         
-        # Adaptive scan interval - balance cho cấu hình tầm trung
-        # 250ms = 4 FPS, phù hợp với đa số máy (i5 gen10+, GTX 1650+)
-        self.base_scan_interval = 250  # Balance giữa 200ms (nhanh) và 300ms (chậm)
+        # Adaptive scan interval - optimized for faster response
+        # 100ms = 10 FPS base, adaptive will adjust based on load
+        self.base_scan_interval = 100  # Reduced from 250ms for better responsiveness
         self.current_scan_interval = self.base_scan_interval
         self.overload_detected = False  # Track OCR overload state
         
@@ -442,9 +416,7 @@ class ScreenTranslator:
         
         if hasattr(self, 'translation_service_var'):
             # Sync translation service với giá trị đã load
-            if self.use_marianmt and self.MARIANMT_AVAILABLE:
-                self.translation_service_var.set("local (MarianMT)")
-            elif self.use_deepl:
+            if self.use_deepl:
                 self.translation_service_var.set("deepl")
             else:
                 self.translation_service_var.set("google")
@@ -453,9 +425,13 @@ class ScreenTranslator:
         if hasattr(self, 'deepl_context_window_var'):
             self.deepl_context_window_var.set(self.deepl_context_window_size)
         
+        # Tesseract verified flag - cache để tránh blocking call mỗi lần
+        self.tesseract_verified = False
+        self.tesseract_last_check_time = 0
+        
         # Khởi tạo OCR engine nếu cần
         if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-            # Khởi tạo handler với GPU option nếu dùng handlers
+            # Khởi tạo handler nếu dùng handlers
             if HANDLERS_AVAILABLE and not self.easyocr_handler:
                 try:
                     self.easyocr_handler = EasyOCRHandler(
@@ -538,23 +514,34 @@ class ScreenTranslator:
             self.current_scan_interval = self.base_scan_interval
             log_error("Error in update_adaptive_scan_interval", e)
     
-    def verify_tesseract(self, silent=False):
+    def verify_tesseract(self, silent=False, force_check=False):
         """Kiểm tra Tesseract OCR đã được cài đặt và có thể truy cập
         
         Args:
             silent: Nếu True, không log error (dùng cho background checks)
+            force_check: Nếu True, bỏ qua cache và check lại
         
         Returns:
             bool: True nếu Tesseract available, False otherwise
         """
+        # Cache check để tránh blocking calls liên tục (mỗi get_tesseract_version mất 1-3s)
+        current_time = time.time()
+        if not force_check and self.tesseract_verified and (current_time - self.tesseract_last_check_time) < 300:
+            # Cache valid trong 5 phút
+            return True
+        
         try:
             version = pytesseract.get_tesseract_version()
+            self.tesseract_verified = True
+            self.tesseract_last_check_time = current_time
             return True
         except pytesseract.TesseractNotFoundError:
+            self.tesseract_verified = False
             if not silent:
                 self.log("Lỗi: Tesseract OCR chưa được cài đặt hoặc chưa cấu hình đường dẫn.")
             return False
         except Exception as e:
+            self.tesseract_verified = False
             if not silent:
                 log_error("Lỗi kiểm tra Tesseract", e)
             return False
@@ -650,7 +637,7 @@ class ScreenTranslator:
                     )
                     self.save_config()
                     
-                    if self.verify_tesseract():
+                    if self.verify_tesseract(force_check=True):
                         self.log(f"Đã đặt đường dẫn Tesseract thành công: {file_path}")
                         messagebox.showinfo("Thành công", "Đã cấu hình đường dẫn Tesseract OCR thành công!")
                         return
@@ -703,7 +690,7 @@ class ScreenTranslator:
                             )
                             self.save_config()
                             
-                            if self.verify_tesseract():
+                            if self.verify_tesseract(force_check=True):
                                 messagebox.showinfo("Thành công", f"Đã tìm thấy và cấu hình Tesseract OCR:\n{tesseract_path}")
                                 found = True
                                 return
@@ -918,71 +905,18 @@ class ScreenTranslator:
         )
         tesseract_info.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=2)
         
-        self.easyocr_gpu_row = 3
-        self.easyocr_gpu_frame = ttk.Frame(settings_frame)
-        self.easyocr_gpu_frame.grid(row=self.easyocr_gpu_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        # CPU-ONLY MODE NOTICE (GPU removed as CPU performs better)
+        self.easyocr_cpu_notice_row = 3
+        self.easyocr_cpu_notice_frame = ttk.Frame(settings_frame)
+        self.easyocr_cpu_notice_frame.grid(row=self.easyocr_cpu_notice_row, column=0, columnspan=2, sticky=tk.W, pady=5)
         
-        gpu_available = False
-        gpu_name = None
-        try:
-            import torch
-            if torch.cuda.is_available():
-                gpu_available = True
-                gpu_name = torch.cuda.get_device_name(0)
-        except Exception as e:
-            log_error("Error checking GPU availability in UI", e)
-        
-        self.easyocr_gpu_var = tk.StringVar(value="auto")  # auto, cpu, gpu
-        if self.easyocr_use_gpu is True:
-            self.easyocr_gpu_var.set("gpu")
-        elif self.easyocr_use_gpu is False:
-            self.easyocr_gpu_var.set("cpu")
-        else:
-            self.easyocr_gpu_var.set("auto")
-        
-        ttk.Label(self.easyocr_gpu_frame, text="EasyOCR Mode:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        gpu_radio_frame = ttk.Frame(self.easyocr_gpu_frame)
-        gpu_radio_frame.pack(side=tk.LEFT)
-        
-        ttk.Radiobutton(
-            gpu_radio_frame,
-            text="Tự động",
-            variable=self.easyocr_gpu_var,
-            value="auto",
-            command=self.on_easyocr_gpu_change
+        ttk.Label(self.easyocr_cpu_notice_frame, text="EasyOCR Mode:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(
+            self.easyocr_cpu_notice_frame,
+            text="CPU-only (tối ưu nhất cho real-time gaming)",
+            font=("Arial", 9, "bold"),
+            foreground="green"
         ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Radiobutton(
-            gpu_radio_frame,
-            text="CPU",
-            variable=self.easyocr_gpu_var,
-            value="cpu",
-            command=self.on_easyocr_gpu_change
-        ).pack(side=tk.LEFT, padx=5)
-        
-        gpu_radio = ttk.Radiobutton(
-            gpu_radio_frame,
-            text="GPU",
-            variable=self.easyocr_gpu_var,
-            value="gpu",
-            command=self.on_easyocr_gpu_change
-        )
-        gpu_radio.pack(side=tk.LEFT, padx=5)
-        
-        if not gpu_available:
-            gpu_radio.config(state=tk.DISABLED)
-            gpu_info_text = " (GPU không khả dụng)"
-        else:
-            gpu_info_text = f" ({gpu_name})" if gpu_name else ""
-        
-        self.gpu_info_label = tk.Label(
-            self.easyocr_gpu_frame,
-            text=gpu_info_text,
-            font=("Arial", 8),
-            fg="gray" if not gpu_available else "green"
-        )
-        self.gpu_info_label.pack(side=tk.LEFT, padx=5)
         
         self.easyocr_multi_scale_row = 4
         self.easyocr_multi_scale_frame = ttk.Frame(settings_frame)
@@ -1025,12 +959,8 @@ class ScreenTranslator:
         services = ["google"]
         if self.DEEPL_API_AVAILABLE:
             services.append("deepl")
-        if self.MARIANMT_AVAILABLE:
-            services.append("local (MarianMT)")
         
-        if self.use_marianmt and self.MARIANMT_AVAILABLE:
-            initial_service = "local (MarianMT)"
-        elif self.use_deepl:
+        if self.use_deepl:
             initial_service = "deepl"
         else:
             initial_service = "google"
@@ -1321,13 +1251,6 @@ class ScreenTranslator:
             width=15
         ).pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(
-            preset_buttons_frame,
-            text="Mặc Định",
-            command=lambda: self.apply_preset('default'),
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
         apply_button_frame = ttk.Frame(settings_container)
         apply_button_frame.grid(row=11, column=0, columnspan=4, pady=15, sticky=tk.EW)
         
@@ -1466,16 +1389,15 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
    
    3. ENGINE OCR:
       - Tesseract: Mặc định, CPU thấp (dùng cho nhu cầu phổ thông)
-      - EasyOCR: Chính xác hơn, tốn CPU/GPU hơn (khuyến nghị cho game)
+      - EasyOCR: Chính xác hơn, CPU-only mode (khuyến nghị cho game)
       - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
    
    4. EASYOCR MODE (chỉ khi chọn EasyOCR):
-      - Tự động: Tự chọn CPU/GPU (khuyến nghị)
-      - CPU: Tiết kiệm GPU
-      - GPU: Nhanh hơn, giảm tải CPU (cần NVIDIA GPU)
+      - CPU-only mode (tối ưu nhất cho real-time gaming)
+      - Không dùng GPU vì CPU performance tốt hơn với gaming subtitle
    
    4a. EASYOCR MULTI-SCALE (chỉ khi chọn EasyOCR):
-      - Tăng độ chính xác nhưng chậm hơn 2-3 lần
+      - Tăng độ chính xác nhưng chậm hơn 2-3 lần (không khuyến nghị cho gaming)
    
    4b. TESSERACT OPTIONS (chỉ khi chọn Tesseract):
       - Multi-scale: Tăng độ chính xác, chậm hơn 1.5-2 lần
@@ -1486,10 +1408,6 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
    6. DỊCH VỤ DỊCH THUẬT:
       - Google Translate: Miễn phí, nhanh
       - DeepL: Chất lượng cao, cần API key (https://www.deepl.com/pro-api)
-      - MarianMT (local): Dịch cục bộ, NHANH NHẤT (50-200ms), không cần internet sau khi tải model lần đầu
-        * Hỗ trợ GPU tự động (NVIDIA), fallback CPU
-        * Tải model lần đầu: ~300MB, mất 1-5 phút
-        * Hỗ trợ 14 cặp ngôn ngữ: en↔vi, en↔ja, en↔ko, en↔zh, en↔de, en↔fr, en↔es
    
    7. DEEPL CONTEXT WINDOW (chỉ khi chọn DeepL):
       - Số subtitle trước đó dùng làm ngữ cảnh (0-3, mặc định: 2)
@@ -1498,9 +1416,8 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
 BƯỚC 3: Tùy chỉnh giao diện (Tab "Giao Diện Dịch")
    1. CẤU HÌNH NHANH (PRESET):
       - "Tối Ưu Tốc Độ": Game có hội thoại nhanh
-      - "Cân Bằng": Hầu hết game/ứng dụng (khuyến nghị)
-      - "Tối Ưu Chất Lượng": Cần đọc kỹ
-      - "Mặc Định": Cài đặt mặc định
+      - "Cân Bằng": Hầu hết game/ứng dụng
+      - "Tối Ưu Chất Lượng": Cần đọc kỹ, text phức tạp
       - ⚠️ Nhấn "Áp Dụng" sau khi chọn preset
    
    2. TÙY CHỈNH THỦ CÔNG: Font, màu sắc, kích thước, độ trong suốt, căn lề, v.v.
@@ -1527,12 +1444,11 @@ BƯỚC 5: Sử dụng màn hình dịch
    
    • CHỌN VÙNG: Chọn chính xác vùng hộp thoại, vùng nhỏ hơn = dịch nhanh hơn
    
-   • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung. Nếu có NVIDIA GPU → chọn "GPU" mode
+   • ENGINE OCR: Thử cả Tesseract và EasyOCR. EasyOCR chính xác hơn cho Nhật/Hàn/Trung (CPU-only mode tối ưu cho gaming)
    
    • DỊCH VỤ: 
      - Google Translate: Miễn phí, ổn định
      - DeepL: Chất lượng cao (có phí), Context Window = 2 (khuyến nghị)
-     - MarianMT: NHANH NHẤT (50-200ms), dịch offline sau khi tải model, tự động dùng GPU nếu có
    
    • TỐI ƯU: Tắt hiển thị văn bản gốc, dùng font đơn giản (Arial, Helvetica), giảm độ trong suốt nếu cần
    
@@ -1546,9 +1462,8 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Kiểm tra ngôn ngữ nguồn đã chọn đúng
    
    • DỊCH KHÔNG HOẠT ĐỘNG:
-     - Kiểm tra kết nối internet (không cần với MarianMT sau khi tải model)
+     - Kiểm tra kết nối internet
      - Nếu dùng DeepL: Kiểm tra API key
-     - Nếu dùng MarianMT: Chờ model tải xong lần đầu (1-5 phút), xem log trong tab Trạng Thái
      - Thử chuyển sang Google Translate
    
    • DỊCH SAI:
@@ -1557,7 +1472,7 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Đảm bảo văn bản rõ ràng, không mờ
    
    • CHẬM HOẶC LAG:
-     - EasyOCR: Chọn "GPU" mode nếu có NVIDIA GPU
+     - EasyOCR: CPU-only mode (tối ưu cho gaming)
      - Tăng khoảng thời gian cập nhật (200-300ms)
      - Dùng preset "Cân Bằng" hoặc "Tối Ưu Tốc Độ"
      - Chọn vùng chụp nhỏ hơn, tắt hiển thị văn bản gốc
@@ -1946,19 +1861,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.ocr_engine = config.get('ocr_engine', 'tesseract')
             self.update_interval = config.get('update_interval', 0.5)
             
-            # Load MarianMT settings
-            self.use_marianmt = config.get('use_marianmt', False)
-            self.marianmt_num_beams = config.get('marianmt_num_beams', 2)
-            self.marianmt_use_gpu = config.get('marianmt_use_gpu', None)  # None=auto
-            
-            # Load EasyOCR GPU option
-            easyocr_gpu_config = config.get('easyocr_use_gpu', None)
-            if easyocr_gpu_config is None:
-                self.easyocr_use_gpu = None  # Auto-detect
-            elif easyocr_gpu_config is True:
-                self.easyocr_use_gpu = True  # Force GPU
-            else:
-                self.easyocr_use_gpu = False  # Force CPU
+            # Force CPU-only mode (ignore saved GPU config)
+            self.easyocr_use_gpu = False
             
             # Load EasyOCR Multi-scale option
             self.easyocr_multi_scale = config.get('easyocr_multi_scale', False)
@@ -2051,7 +1955,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'target_language': self.target_language,
                 'update_interval': self.update_interval,
                 'ocr_engine': self.ocr_engine,
-                'easyocr_use_gpu': self.easyocr_use_gpu,
+                # EasyOCR settings (CPU-only, no GPU option)
                 'easyocr_multi_scale': self.easyocr_multi_scale,
                 'tesseract_multi_scale': self.tesseract_multi_scale,
                 'tesseract_text_region_detection': self.tesseract_text_region_detection,
@@ -2059,9 +1963,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'deepl_api_key': self.deepl_api_key,
                 'use_deepl': self.use_deepl,
                 'deepl_context_window_size': self.deepl_context_window_size,
-                'use_marianmt': self.use_marianmt,
-                'marianmt_num_beams': self.marianmt_num_beams,
-                'marianmt_use_gpu': self.marianmt_use_gpu,
                 'overlay_settings': {
                     'font_size': self.overlay_font_size,
                     'font_family': self.overlay_font_family,
@@ -2164,32 +2065,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         if hasattr(self, 'deepl_context_manager'):
             self.deepl_context_manager.clear_context()
         
-        # Reload MarianMT model if using MarianMT
-        if self.use_marianmt and self.marianmt_handler:
-            # Chuẩn hóa mã ngôn ngữ: Tesseract (eng/deu/...) -> ISO (en/de/...)
-            src_map = {
-                "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
-                "jpn": "ja", "kor": "ko", "chi_sim": "zh", "chi_tra": "zh"
-            }
-            src_raw = self.source_language
-            tgt_raw = self.target_language
-            src = src_map.get(src_raw, src_raw)
-            tgt = tgt_raw
-            if self.marianmt_handler.is_language_pair_supported(src, tgt):
-                current_src = getattr(self.marianmt_handler, 'current_model_src', None)
-                current_tgt = getattr(self.marianmt_handler, 'current_model_tgt', None)
-                if current_tgt != tgt:
-                    self.log(f"Đang tải mô hình {src}->{tgt}... (chuẩn hóa từ {src_raw}->{tgt_raw})")
-                    self.root.update()
-                    try:
-                        success = self.marianmt_handler._load_model(src, tgt)
-                        if success:
-                            self.log(f"Mô hình {src}->{tgt} đã sẵn sàng!")
-                    except Exception as e:
-                        self.log(f"Lỗi tải mô hình: {str(e)}")
-            else:
-                self.log(f"Cặp ngôn ngữ {src}->{tgt} chưa hỗ trợ trong MarianMT (sẽ dùng Google)")
-        
         self.save_config()
     
     def on_translation_service_change(self, event=None):
@@ -2199,110 +2074,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
         
         service = self.translation_service_var.get()
         old_use_deepl = self.use_deepl
-        old_use_marianmt = getattr(self, 'use_marianmt', False)
         
         # Update flags
-        self.use_marianmt = (service == "local (MarianMT)")
         self.use_deepl = (service == "deepl")
         self.save_config()
         
         # Toggle DeepL widgets visibility
         self.toggle_deepl_widgets()
         
-        # Handle MarianMT
-        if self.use_marianmt:
-            if not self.MARIANMT_AVAILABLE:
-                messagebox.showerror(
-                    "Lỗi", 
-                    "MarianMT không khả dụng. Cài đặt:\n"
-                    "pip install transformers torch sentencepiece"
-                )
-                self.translation_service_var.set("google")
-                self.use_marianmt = False
-                self.save_config()
-                return
-            
-            # Initialize MarianMT handler if needed
-            if self.marianmt_handler is None:
-                try:
-                    self.marianmt_handler = MarianMTHandler(
-                        num_beams=self.marianmt_num_beams,
-                        use_gpu=self.marianmt_use_gpu
-                    )
-                    stats = self.marianmt_handler.get_stats()
-                    device_info = f"GPU: {stats['gpu_name']}" if stats['gpu_enabled'] else "CPU"
-                    self.log(f"Đã khởi tạo MarianMT ({device_info})")
-                    
-                    # Preload model for current language pair (chuẩn hóa mã)
-                    src_map = {
-                        "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
-                        "jpn": "ja", "kor": "ko", "chi_sim": "zh", "chi_tra": "zh"
-                    }
-                    src_raw = self.source_language
-                    tgt_raw = self.target_language
-                    src = src_map.get(src_raw, src_raw)
-                    tgt = tgt_raw
-                    model_status = "sẽ tự động tải khi dùng lần đầu"
-                    
-                    if self.marianmt_handler.is_language_pair_supported(src, tgt):
-                        self.log(f"Đang tải mô hình {src}->{tgt}... (chuẩn hóa từ {src_raw}->{tgt_raw}, lần đầu 1-5 phút)")
-                        self.root.update()  # Force UI update
-                        
-                        try:
-                            success = self.marianmt_handler._load_model(src, tgt)
-                            if success:
-                                self.log(f"Mô hình {src}->{tgt} đã sẵn sàng!")
-                                model_status = "đã sẵn sàng sử dụng"
-                            else:
-                                self.log(f"Không thể tải mô hình {src}->{tgt}, sẽ thử lại khi dịch")
-                        except Exception as e:
-                            self.log(f"Lỗi tải mô hình: {str(e)}")
-                    else:
-                        self.log(f"Cặp ngôn ngữ {src}->{tgt} chưa hỗ trợ")
-                        model_status = "cặp ngôn ngữ chưa hỗ trợ (dùng Google/DeepL thay thế)"
-                    
-                    # Show supported language pairs
-                    pairs = self.marianmt_handler.get_supported_pairs()
-                    messagebox.showinfo(
-                        "Dịch Cục Bộ Sẵn Sàng",
-                        f"Dịch thuật cục bộ đã kích hoạt trên {device_info}\n\n"
-                        f"Hỗ trợ: {len(pairs)} cặp ngôn ngữ\n"
-                        f"Tải mô hình lần đầu: ~300MB/cặp (1-5 phút)\n"
-                        f"Tốc độ dịch: 50-200ms (nhanh hơn API 60-80%)\n\n"
-                        f"Mô hình {src}->{tgt}: {model_status} (chuẩn hóa từ {src_raw}->{tgt_raw})"
-                    )
-                except Exception as e:
-                    log_error("Lỗi khởi tạo MarianMT", e)
-                    messagebox.showerror("Lỗi", f"Không thể khởi tạo MarianMT: {e}")
-                    self.translation_service_var.set("google")
-                    self.use_marianmt = False
-                    self.save_config()
-            else:
-                pass
-                # Reload model if language pair changed (chuẩn hóa mã)
-                src_map = {
-                    "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
-                    "jpn": "ja", "kor": "ko", "chi_sim": "zh", "chi_tra": "zh"
-                }
-                src_raw = self.source_language
-                tgt_raw = self.target_language
-                src = src_map.get(src_raw, src_raw)
-                tgt = tgt_raw
-                if self.marianmt_handler.is_language_pair_supported(src, tgt):
-                    current_src = getattr(self.marianmt_handler, 'current_model_src', None)
-                    current_tgt = getattr(self.marianmt_handler, 'current_model_tgt', None)
-                    if current_src != src or current_tgt != tgt:
-                        self.log(f"Đang tải lại mô hình {src}->{tgt}... (chuẩn hóa từ {src_raw}->{tgt_raw})")
-                        self.root.update()
-                        try:
-                            success = self.marianmt_handler._load_model(src, tgt)
-                            if success:
-                                self.log(f"Mô hình {src}->{tgt} đã sẵn sàng!")
-                        except Exception as e:
-                            self.log(f"Lỗi tải mô hình: {str(e)}")
-        
         # Handle DeepL
-        elif self.use_deepl:
+        if self.use_deepl:
             if not self.DEEPL_API_AVAILABLE:
                 messagebox.showerror("Lỗi", "DeepL API không khả dụng. Vui lòng cài đặt: pip install deepl")
                 self.translation_service_var.set("google")
@@ -2317,14 +2098,12 @@ Chúc bạn sử dụng công cụ hiệu quả!
             
             if not self.deepl_api_key:
                 messagebox.showwarning("Cảnh báo", "Vui lòng nhập DeepL API Key")
-                # Không revert về google, để user có thể nhập key
                 return
             
             # Initialize DeepL client
             try:
                 import deepl
                 self.deepl_api_client = deepl.Translator(self.deepl_api_key)
-                pass
             except Exception as e:
                 log_error("Lỗi khởi tạo DeepL khi chuyển dịch vụ", e)
                 messagebox.showerror("Lỗi", f"Không thể khởi tạo DeepL: {e}")
@@ -2338,7 +2117,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Clear DeepL context when switching to Google
                 if hasattr(self, 'deepl_context_manager'):
                     self.deepl_context_manager.clear_context()
-                pass
     
     def toggle_deepl_widgets(self):
         """Ẩn/hiện DeepL widgets dựa vào translation service"""
@@ -2382,31 +2160,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         # Clear DeepL context when source language changes
         if hasattr(self, 'deepl_context_manager'):
             self.deepl_context_manager.clear_context()
-        
-        # Reload MarianMT model if using MarianMT (chuẩn hóa mã)
-        if self.use_marianmt and self.marianmt_handler:
-            src_map = {
-                "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
-                "jpn": "ja", "kor": "ko", "chi_sim": "zh", "chi_tra": "zh"
-            }
-            src_raw = self.source_language
-            tgt_raw = self.target_language
-            src = src_map.get(src_raw, src_raw)
-            tgt = tgt_raw
-            if self.marianmt_handler.is_language_pair_supported(src, tgt):
-                current_src = getattr(self.marianmt_handler, 'current_model_src', None)
-                current_tgt = getattr(self.marianmt_handler, 'current_model_tgt', None)
-                if current_src != src:
-                    self.log(f"Đang tải mô hình {src}->{tgt}... (chuẩn hóa từ {src_raw}->{tgt_raw})")
-                    self.root.update()
-                    try:
-                        success = self.marianmt_handler._load_model(src, tgt)
-                        if success:
-                            self.log(f"Mô hình {src}->{tgt} đã sẵn sàng!")
-                    except Exception as e:
-                        self.log(f"Lỗi tải mô hình: {str(e)}")
-            else:
-                self.log(f"Cặp ngôn ngữ {src}->{tgt} chưa hỗ trợ trong MarianMT (sẽ dùng Google)")
         
         self.save_config()
         
@@ -2486,11 +2239,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 except Exception as e:
                     log_error("Lỗi khởi tạo Tesseract handler khi chuyển engine", e)
             elif self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-                # Khởi tạo handler với GPU option nếu dùng handlers
+                # Khởi tạo handler nếu dùng handlers
                 if HANDLERS_AVAILABLE:
                     try:
                         if self.easyocr_handler:
-                            self.easyocr_handler = None  # Reset để khởi tạo lại với GPU option mới
+                            self.easyocr_handler = None  # Reset để khởi tạo lại
                         self.easyocr_handler = EasyOCRHandler(
                             source_language=self.source_language,
                             use_gpu=self.easyocr_use_gpu
@@ -2524,9 +2277,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.tesseract_path_label_frame.grid()
                 if hasattr(self, 'tesseract_options_frame'):
                     self.tesseract_options_frame.grid()
-                # Ẩn EasyOCR GPU option và Multi-scale option
-                if hasattr(self, 'easyocr_gpu_frame'):
-                    self.easyocr_gpu_frame.grid_remove()
+                # Ẩn EasyOCR CPU notice và Multi-scale option
+                if hasattr(self, 'easyocr_cpu_notice_frame'):
+                    self.easyocr_cpu_notice_frame.grid_remove()
                 if hasattr(self, 'easyocr_multi_scale_frame'):
                     self.easyocr_multi_scale_frame.grid_remove()
             else:
@@ -2535,55 +2288,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.tesseract_path_label_frame.grid_remove()
                 if hasattr(self, 'tesseract_options_frame'):
                     self.tesseract_options_frame.grid_remove()
-                # Hiển thị EasyOCR GPU option và Multi-scale option
-                if hasattr(self, 'easyocr_gpu_frame'):
-                    self.easyocr_gpu_frame.grid()
+                # Hiển thị EasyOCR CPU notice và Multi-scale option
+                if hasattr(self, 'easyocr_cpu_notice_frame'):
+                    self.easyocr_cpu_notice_frame.grid()
                 if hasattr(self, 'easyocr_multi_scale_frame'):
                     self.easyocr_multi_scale_frame.grid()
     
-    def on_easyocr_gpu_change(self):
-        """Callback khi người dùng thay đổi GPU option"""
-        if not hasattr(self, 'easyocr_gpu_var'):
-            return
-        
-        gpu_option = self.easyocr_gpu_var.get()
-        if gpu_option == "auto":
-            self.easyocr_use_gpu = None
-        elif gpu_option == "cpu":
-            self.easyocr_use_gpu = False
-        elif gpu_option == "gpu":
-            self.easyocr_use_gpu = True
-        
-        self.save_config()
-        
-        # Nếu đang dùng EasyOCR và reader đã được khởi tạo, cần khởi tạo lại
-        if self.ocr_engine == "easyocr" and self.EASYOCR_AVAILABLE:
-            # Reset handler và reader để khởi tạo lại với GPU option mới
-            if HANDLERS_AVAILABLE:
-                try:
-                    if self.easyocr_handler:
-                        self.easyocr_handler = None
-                    # Khởi tạo lại handler với GPU option mới
-                    self.easyocr_handler = EasyOCRHandler(
-                        source_language=self.source_language,
-                        use_gpu=self.easyocr_use_gpu,
-                        enable_multi_scale=self.easyocr_multi_scale
-                    )
-                except Exception as e:
-                    log_error(f"Lỗi khởi tạo EasyOCR handler với GPU option {gpu_option}", e)
-                    self.log(f"Lỗi khởi tạo EasyOCR handler: {e}. Sẽ dùng fallback reader.")
-                    # Nếu handler khởi tạo thất bại, fallback về reader cũ
-                    self.easyocr_handler = None
-                    if hasattr(self, 'easyocr_reader'):
-                        self.easyocr_reader = None
-                    self.initialize_easyocr_reader()
-                    self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Fallback reader sẽ được khởi tạo lại.")
-            else:
-                # Không dùng handlers, reset reader cũ
-                if hasattr(self, 'easyocr_reader'):
-                    self.easyocr_reader = None
-                self.initialize_easyocr_reader()
-                self.log(f"Đã thay đổi EasyOCR mode: {gpu_option}. Reader sẽ được khởi tạo lại.")
+    # GPU callback removed - CPU-only mode
     
     def on_easyocr_multi_scale_change(self):
         """Callback khi người dùng thay đổi Multi-scale option"""
@@ -2602,10 +2313,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         self.easyocr_handler.enable_multi_scale = self.easyocr_multi_scale
                         self.log(f"Đã {'bật' if self.easyocr_multi_scale else 'tắt'} Multi-scale cho EasyOCR.")
                     else:
-                        # Nếu chưa có handler, khởi tạo mới
+                        # Nếu chưa có handler, khởi tạo mới (CPU-only)
                         self.easyocr_handler = EasyOCRHandler(
                             source_language=self.source_language,
-                            use_gpu=self.easyocr_use_gpu,
+                            use_gpu=False,  # Force CPU-only
                             enable_multi_scale=self.easyocr_multi_scale
                         )
                 except Exception as e:
@@ -2662,7 +2373,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 log_error(f"Lỗi cập nhật Tesseract Text Region Detection setting", e)
     
     def initialize_easyocr_reader(self):
-        """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers"""
+        """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers
+        CPU-only mode for optimal real-time gaming performance"""
         if not self.EASYOCR_AVAILABLE:
             return None
         
@@ -2689,7 +2401,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 }
                 easyocr_lang = lang_map.get(self.source_language, "en")
                 
-                self.log(f"Đang khởi tạo EasyOCR reader với ngôn ngữ: {easyocr_lang}...")
+                self.log(f"Đang khởi tạo EasyOCR reader (CPU mode) với ngôn ngữ: {easyocr_lang}...")
                 
                 # Suppress warnings khi khởi tạo EasyOCR
                 import os
@@ -2715,79 +2427,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         
                         import easyocr
                         
-                        # Determine GPU usage based on user preference
-                        use_gpu = False
-                        gpu_name = None
-                        gpu_debug = ""
-                        
-                        if self.easyocr_use_gpu is True:
-                            # Force GPU mode
-                            try:
-                                import torch
-                                if torch.cuda.is_available():
-                                    use_gpu = True
-                                    gpu_name = torch.cuda.get_device_name(0)
-                                    gpu_debug = f"GPU mode forced by user: {gpu_name}"
-                                    log_error(f"[INFO] {gpu_debug}")
-                                    self.log(f"GPU mode forced: {gpu_name}")
-                                else:
-                                    gpu_debug = "GPU mode requested but GPU not available. Falling back to CPU."
-                                    log_error(f"[WARNING] {gpu_debug}")
-                                    self.log("GPU requested but not available. Using CPU mode.")
-                            except Exception as e:
-                                gpu_debug = f"Error checking GPU: {str(e)}"
-                                log_error(f"[WARNING] {gpu_debug}")
-                        elif self.easyocr_use_gpu is False:
-                            # Force CPU mode
-                            use_gpu = False
-                            gpu_debug = "CPU mode forced by user"
-                            log_error(f"[INFO] {gpu_debug}")
-                            self.log("CPU mode forced by user")
-                        else:
-                            # Auto-detect (default)
-                            try:
-                                import torch
-                                gpu_debug = f"PyTorch version: {torch.__version__}"
-                                
-                                if torch.cuda.is_available():
-                                    use_gpu = True
-                                    gpu_name = torch.cuda.get_device_name(0)
-                                    cuda_version = getattr(torch.version, 'cuda', 'Unknown')
-                                    device_count = torch.cuda.device_count()
-                                    gpu_debug += f", CUDA: {cuda_version}, Devices: {device_count}, GPU: {gpu_name}"
-                                    log_error(f"[INFO] GPU auto-detected: {gpu_name}. EasyOCR will use GPU mode.")
-                                    self.log(f"GPU auto-detected: {gpu_name}. EasyOCR will use GPU mode.")
-                                else:
-                                    cuda_version = getattr(torch.version, 'cuda', None)
-                                    if cuda_version:
-                                        gpu_debug += f", CUDA version: {cuda_version}, but torch.cuda.is_available() = False"
-                                    else:
-                                        gpu_debug += ", PyTorch installed without CUDA support"
-                                    log_error(f"[INFO] No GPU detected. {gpu_debug}")
-                                    self.log("No GPU detected. EasyOCR will use CPU mode.")
-                            except ImportError:
-                                gpu_debug = "PyTorch not installed"
-                                log_error(f"[INFO] {gpu_debug}. EasyOCR will use CPU mode.")
-                                self.log("PyTorch not available for GPU detection. EasyOCR will use CPU mode.")
-                            except Exception as e:
-                                gpu_debug = f"Error: {str(e)}"
-                                log_error(f"[INFO] GPU detection error: {gpu_debug}. EasyOCR will use CPU mode.")
-                                self.log("GPU detection error. EasyOCR will use CPU mode.")
-                        
-                        # Tối ưu cho long sessions: reuse reader, không reload model
+                        # Force CPU mode - optimal for real-time gaming
                         self.easyocr_reader = easyocr.Reader(
                             [easyocr_lang], 
-                            gpu=use_gpu, 
+                            gpu=False,  # CPU-only mode
                             verbose=False,
-                            download_enabled=False  # Không download lại nếu đã có
+                            download_enabled=False
                         )
                         
-                        if use_gpu:
-                            log_error(f"[INFO] EasyOCR initialized with GPU acceleration ({gpu_name})")
-                            self.log(f"EasyOCR initialized with GPU acceleration ({gpu_name})")
-                        else:
-                            log_error("[INFO] EasyOCR initialized with CPU mode")
-                            self.log("EasyOCR initialized with CPU mode")
+                        log_error("[INFO] EasyOCR initialized with CPU mode (optimal for gaming)")
+                        self.log("EasyOCR initialized with CPU mode")
                 finally:
                     # Khôi phục stderr
                     sys.stderr = old_stderr
@@ -2818,52 +2467,52 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Apply preset configuration based on performance level - deeply tuned for translation speed
         Updated with latest optimizations: fast path, bilateral filter, morphology, aggressive caching"""
         if preset_type == 'speed':
-            # SPEED: Ưu tiên tốc độ tối đa cho game real-time
-            # - Tesseract OCR (nhanh hơn EasyOCR 3-4x: 50-150ms vs 200-500ms)
-            # - Scan interval 50ms (20 FPS - rất responsive)
+            # SPEED: Ưu tiên tốc độ cho game dialogue nhanh
+            # - Tesseract OCR (nhanh: 50-150ms)
+            # - Scan interval 100ms (10 FPS - responsive)
             # - Minimal UI (giảm rendering overhead)
-            # - Cache hit rate cao (70-90%) → delay trung bình ~100ms
-            self.update_interval = 0.05  # 50ms = 20 FPS (cực nhanh cho dialogue)
-            self.base_scan_interval = int(self.update_interval * 1000)
-            if not self.overload_detected:
-                self.current_scan_interval = self.base_scan_interval
-            if hasattr(self, 'interval_var'):
-                self.interval_var.set("50")
-            
-            # Minimal UI cho tốc độ tối đa
-            self.font_size_var.set("12")
-            self.transparency_var.set("90")
-            self.width_var.set("480")
-            self.height_var.set("220")
-            self.text_color_var.set("#00ff88")  # Cyan-green: readable + fast
-            self.bg_color_var.set("#0a0a0a")  # Near-black: fast render
-            self.original_color_var.set("#888888")
-            self.show_original_var.set(False)  # Hide original → giảm 50% rendering
-            self.text_align_var.set("left")
-            self.font_family_var.set("Consolas")  # Monospace → fast render
-            self.font_weight_var.set("normal")
-            self.line_spacing_var.set("1.1")
-            self.padding_x_var.set("12")
-            self.padding_y_var.set("12")
-            self.border_width_var.set("0")
-            self.border_color_var.set("#00ff88")
-            self.word_wrap_var.set(True)
-            self.keep_history_var.set(False)
-            self.log("Preset TỐC ĐỘ: Tesseract (50-150ms) + Cache (70-90% hit) → Delay ~100ms. Nhấn 'Áp Dụng'.")
-        elif preset_type == 'balanced':
-            # BALANCED: Cân bằng tốc độ và chất lượng cho hầu hết game AAA
-            # - EasyOCR GPU (chính xác 85-95%, chậm hơn: 200-500ms với fast path)
-            # - Scan interval 100ms (10 FPS - smooth cho cutscenes)
-            # - Quality UI (readable, không quá fancy)
-            # - Cache hit rate cao → delay trung bình ~200ms
-            self.update_interval = 0.1  # 100ms = 10 FPS (balanced)
+            # - Target: Action games, shooter với dialogue nhanh
+            self.update_interval = 0.1  # 100ms = 10 FPS
             self.base_scan_interval = int(self.update_interval * 1000)
             if not self.overload_detected:
                 self.current_scan_interval = self.base_scan_interval
             if hasattr(self, 'interval_var'):
                 self.interval_var.set("100")
             
-            # Balanced UI: readable nhưng không sacrifice speed
+            # Minimal UI cho tốc độ
+            self.font_size_var.set("12")
+            self.transparency_var.set("90")
+            self.width_var.set("480")
+            self.height_var.set("220")
+            self.text_color_var.set("#00ff00")  # Lime green - readable
+            self.bg_color_var.set("#0a0a0a")  # Near-black
+            self.original_color_var.set("#888888")
+            self.show_original_var.set(False)  # Hide original → faster rendering
+            self.text_align_var.set("left")
+            self.font_family_var.set("Consolas")  # Monospace
+            self.font_weight_var.set("normal")
+            self.line_spacing_var.set("1.1")
+            self.padding_x_var.set("12")
+            self.padding_y_var.set("12")
+            self.border_width_var.set("0")
+            self.border_color_var.set("#00ff00")
+            self.word_wrap_var.set(True)
+            self.keep_history_var.set(False)
+            self.log("Preset TỐC ĐỘ: Tesseract + 100ms scan → ~6-10 FPS. Nhấn 'Áp Dụng'.")
+        elif preset_type == 'balanced':
+            # BALANCED: Cân bằng tốc độ và chất lượng - KHUYẾN NGHỊ
+            # - EasyOCR CPU (chính xác 85-95%: 200-500ms)
+            # - Scan interval 150ms (6-7 FPS - sweet spot)
+            # - Balanced UI (readable, show original)
+            # - Target: Hầu hết game AAA, RPG
+            self.update_interval = 0.15  # 150ms = 6-7 FPS (balanced)
+            self.base_scan_interval = int(self.update_interval * 1000)
+            if not self.overload_detected:
+                self.current_scan_interval = self.base_scan_interval
+            if hasattr(self, 'interval_var'):
+                self.interval_var.set("150")
+            
+            # Balanced UI
             self.font_size_var.set("13")
             self.transparency_var.set("88")
             self.width_var.set("520")
@@ -2871,7 +2520,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.text_color_var.set("#ffffff")
             self.bg_color_var.set("#1a1a1a")
             self.original_color_var.set("#b0b0b0")
-            self.show_original_var.set(True)  # Show original cho context
+            self.show_original_var.set(True)  # Show original
             self.text_align_var.set("left")
             self.font_family_var.set("Segoe UI")
             self.font_weight_var.set("normal")
@@ -2882,26 +2531,26 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.border_color_var.set("#ffffff")
             self.word_wrap_var.set(True)
             self.keep_history_var.set(False)
-            self.log("Preset CÂN BẰNG: EasyOCR GPU (200-500ms) + Cache → Delay ~200ms. Nhấn 'Áp Dụng'.")
+            self.log("Preset CÂN BẰNG: EasyOCR CPU + 150ms scan → ~4-6 FPS. Khuyến nghị cho hầu hết game. Nhấn 'Áp Dụng'.")
         elif preset_type == 'quality':
-            # QUALITY: Ưu tiên độ chính xác tối đa cho cutscenes, dialogue quan trọng
-            # - EasyOCR GPU + Full preprocessing (chính xác cao nhất)
-            # - Scan interval 150ms (6.7 FPS - smooth cho cinematic)
-            # - Premium UI (đẹp, dễ đọc, comfortable)
-            # - Accept delay cao hơn để đổi lấy accuracy
-            self.update_interval = 0.15  # 150ms = 6.7 FPS (quality)
+            # QUALITY: Ưu tiên độ chính xác và readability
+            # - EasyOCR CPU + Full preprocessing (accuracy cao nhất)
+            # - Scan interval 200ms (5 FPS - smooth, ít duplicate)
+            # - Premium UI (large, semibold, comfortable reading)
+            # - Target: Visual Novel, cutscenes quan trọng
+            self.update_interval = 0.2  # 200ms = 5 FPS (quality)
             self.base_scan_interval = int(self.update_interval * 1000)
             if not self.overload_detected:
                 self.current_scan_interval = self.base_scan_interval
             if hasattr(self, 'interval_var'):
-                self.interval_var.set("150")
+                self.interval_var.set("200")
             
-            # Premium UI: tối ưu readability
+            # Premium UI
             self.font_size_var.set("14")
             self.transparency_var.set("85")
             self.width_var.set("580")
             self.height_var.set("300")
-            self.text_color_var.set("#ffffff")
+            self.text_color_var.set("#e0e0e0")  # Soft white - eye-friendly
             self.bg_color_var.set("#1a1a1a")
             self.original_color_var.set("#c0c0c0")
             self.show_original_var.set(True)
@@ -2915,36 +2564,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.border_color_var.set("#555555")
             self.word_wrap_var.set(True)
             self.keep_history_var.set(False)
-            self.log("Preset CHẤT LƯỢNG: EasyOCR + Full preprocessing → Accuracy cao nhất. Nhấn 'Áp Dụng'.")
-        elif preset_type == 'default':
-            # DEFAULT: Cài đặt mặc định tối ưu cho game AAA thông thường
-            # Similar to BALANCED nhưng conservative hơn (scan interval 200ms)
-            self.update_interval = 0.2  # 200ms default (safe)
-            self.base_scan_interval = int(self.update_interval * 1000)
-            if not self.overload_detected:
-                self.current_scan_interval = self.base_scan_interval
-            if hasattr(self, 'interval_var'):
-                self.interval_var.set("200")
-            
-            self.font_size_var.set("13")
-            self.transparency_var.set("88")
-            self.width_var.set("520")
-            self.height_var.set("260")
-            self.text_color_var.set("#ffffff")
-            self.bg_color_var.set("#1a1a1a")
-            self.original_color_var.set("#b0b0b0")
-            self.show_original_var.set(True)
-            self.text_align_var.set("left")
-            self.font_family_var.set("Segoe UI")
-            self.font_weight_var.set("normal")
-            self.line_spacing_var.set("1.2")
-            self.padding_x_var.set("16")
-            self.padding_y_var.set("16")
-            self.border_width_var.set("0")
-            self.border_color_var.set("#ffffff")
-            self.word_wrap_var.set(True)
-            self.keep_history_var.set(False)
-            self.log("Preset MẶC ĐỊNH: Cài đặt an toàn cho hầu hết game. Nhấn 'Áp Dụng'.")
+            self.log("Preset CHẤT LƯỢNG: EasyOCR CPU + 200ms scan → ~3-5 FPS, accuracy cao nhất. Nhấn 'Áp Dụng'.")
+
     
     def reset_all_settings(self):
         """Reset overlay settings and update interval to defaults (không reset ngôn ngữ, OCR, dịch vụ)"""
@@ -3038,7 +2659,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 "Giữ nguyên:\n"
                 "• Ngôn ngữ nguồn và đích\n"
                 "• Engine OCR (Tesseract/EasyOCR)\n"
-                "• Dịch vụ dịch (Google/DeepL/MarianMT)\n"
+                "• Dịch vụ dịch (Google/DeepL)\n"
                 "• Đường dẫn Tesseract\n"
                 "• Vùng chụp màn hình\n"
                 "• DeepL API Key\n\n"
@@ -3168,16 +2789,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
         # Create overlay window
         self.create_overlay()
         
-        # Điều chỉnh thread pool dựa trên OCR engine (EasyOCR cần ít workers hơn)
+        # Điều chỉnh thread pool dựa trên OCR engine
         if self.ocr_engine == "easyocr":
-            # EasyOCR: giảm workers để giảm CPU (rất nặng)
-            ocr_workers = 2
+            # EasyOCR: single worker (CPU-intensive, no benefit from parallelization)
+            ocr_workers = 1
             if hasattr(self.ocr_thread_pool, '_max_workers') and self.ocr_thread_pool._max_workers != ocr_workers:
                 self.ocr_thread_pool.shutdown(wait=False)
                 self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
         else:
-            # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
-            ocr_workers = 8
+            # Tesseract: multiple workers (lighter, benefits from parallelization)
+            ocr_workers = 4
             if hasattr(self.ocr_thread_pool, '_max_workers') and self.ocr_thread_pool._max_workers != ocr_workers:
                 self.ocr_thread_pool.shutdown(wait=False)
                 self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
@@ -3240,11 +2861,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 log_error("Error cleaning up EasyOCR reader (fallback)", e)
         
         # Recreate thread pools for next run
-        # EasyOCR: giảm workers để giảm CPU (rất nặng)
-        # Tesseract: có thể nhiều workers hơn (nhẹ hơn)
-        ocr_workers = 2 if self.ocr_engine == "easyocr" else 8
+        # EasyOCR: single worker (CPU-intensive)
+        # Tesseract: fewer workers (reduced from 8 to 4)
+        ocr_workers = 1 if self.ocr_engine == "easyocr" else 4
         self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
-        self.translation_thread_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="Translation")
+        self.translation_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="Translation")  # Reduced from 6 to 4
         
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
@@ -3252,11 +2873,6 @@ Chúc bạn sử dụng công cụ hiệu quả!
         # Reset text history and cache
         self.text_history = []
         self.translation_cache.clear()
-        # Clear unified cache
-        try:
-            self.unified_cache.clear_all()
-        except Exception as e:
-            log_error("Error clearing unified cache", e)
         self.pending_translation = None
         self.text_stability_counter = 0
         self.previous_text = ""
@@ -3299,15 +2915,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
         """Periodic cleanup cho long sessions - giảm memory leak"""
         try:
             # Cleanup translation cache nếu quá lớn
-            if self.cache_manager:
-                # Cache manager tự quản lý LRU, không cần cleanup thủ công
-                pass
-            else:
-                # Fallback: cleanup translation_cache cũ
-                if len(self.translation_cache) > self.max_cache_size:
-                    keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
-                    for key in keys_to_remove:
-                        del self.translation_cache[key]
+            if len(self.translation_cache) > self.max_cache_size:
+                keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]
+                for key in keys_to_remove:
+                    del self.translation_cache[key]
             
             # Trim text history
             if len(self.text_history) > self.history_size:
@@ -3315,7 +2926,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             
             # Force garbage collection nếu cần
             import gc
-            cache_size = self.cache_manager.get_size() if self.cache_manager else len(self.translation_cache)
+            cache_size = len(self.translation_cache)
             if cache_size > self.max_cache_size * 0.8:
                 gc.collect()
         except Exception as e:
@@ -4505,8 +4116,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
         
         last_cap_time = 0.0
         last_cap_hash = None
-        # EasyOCR: tăng min_interval để giảm CPU (chậm hơn nhưng ổn định)
-        min_interval = 0.1 if self.ocr_engine == "easyocr" else 0.03
+        # Simplified minimum interval - rely on adaptive processing
+        min_interval = 0.05 if self.ocr_engine == "easyocr" else 0.03
         similar_frames = 0
         current_scan_interval_sec = min_interval
         
@@ -4925,34 +4536,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 return
             
             if clean_text and len(clean_text) > 2:
-                # Check unified cache first (primary cache)
+                # Check simple cache
                 translated_text = None
-                translator_name = 'deepl' if self.use_deepl else 'google'
-                
-                try:
-                    translated_text = self.unified_cache.get(
-                        clean_text, 
-                        self.source_language, 
-                        self.target_language, 
-                        translator_name
-                    )
-                except Exception as cache_err:
-                    log_error("Error getting translation from unified cache", cache_err)
-                    translated_text = None
-                
-                # Fallback to cache_manager if unified cache misses
-                if not translated_text and self.cache_manager:
-                    try:
-                        translated_text = self.cache_manager.get(clean_text, self.source_language, self.target_language, translator_name)
-                    except Exception as cache_err:
-                        log_error("Error getting translation from cache_manager", cache_err)
-                        translated_text = None
-                
-                # Fallback to old translation_cache
-                if not translated_text:
-                    cache_key = clean_text.lower().strip()
-                    if cache_key in self.translation_cache:
-                        translated_text = self.translation_cache[cache_key]
+                cache_key = clean_text.lower().strip()
+                if cache_key in self.translation_cache:
+                    translated_text = self.translation_cache[cache_key]
                 
                 if not translated_text:
                     # Check if batch translation should be used
@@ -5042,25 +4630,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
                                 for attempt in range(max_retries):
                                     try:
                                         # Check circuit breaker for Google
-                                        if not self.use_deepl and not self.use_marianmt:
+                                        if not self.use_deepl:
                                             if self.google_translation_circuit_breaker.should_force_refresh():
                                                 log_debug("Google Translate circuit breaker is open, skipping")
                                                 break
                                         
-                                        # Priority: MarianMT > DeepL > Google
-                                        if self.use_marianmt and self.MARIANMT_AVAILABLE and self.marianmt_handler:
-                                            start_time = time.time()
-                                            chunk_translated = self.marianmt_handler.translate(
-                                                chunk, 
-                                                self.source_language, 
-                                                self.target_language
-                                            )
-                                            duration = time.time() - start_time
-                                            if chunk_translated and not chunk_translated.startswith("Error:"):
-                                                pass
-                                            else:
-                                                log_error(f"[MarianMT] Translation failed: {chunk_translated}", None)
-                                        elif self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                        # Priority: DeepL > Google
+                                        if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
                                             chunk_translated = self.translate_with_deepl(chunk, source_text_for_context=chunk)
                                         else:
                                             start_time = time.time()
@@ -5098,25 +4674,13 @@ Chúc bạn sử dụng công cụ hiệu quả!
                             for attempt in range(max_retries):
                                 try:
                                     # Check circuit breaker for Google
-                                    if not self.use_deepl and not self.use_marianmt:
+                                    if not self.use_deepl:
                                         if self.google_translation_circuit_breaker.should_force_refresh():
                                             log_debug("Google Translate circuit breaker is open, skipping")
                                             break
                                     
-                                    # Priority: MarianMT > DeepL > Google
-                                    if self.use_marianmt and self.MARIANMT_AVAILABLE and self.marianmt_handler:
-                                        start_time = time.time()
-                                        translated_text = self.marianmt_handler.translate(
-                                            clean_text,
-                                            self.source_language,
-                                            self.target_language
-                                        )
-                                        duration = time.time() - start_time
-                                        if translated_text and not translated_text.startswith("Error:"):
-                                            log_debug(f"[MarianMT] Translated in {duration*1000:.0f}ms: {len(clean_text)} -> {len(translated_text)} chars")
-                                        else:
-                                            log_error(f"[MarianMT] Translation failed: {translated_text}", None)
-                                    elif self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
+                                    # Priority: DeepL > Google
+                                    if self.use_deepl and self.DEEPL_API_AVAILABLE and self.deepl_api_client:
                                         translated_text = self.translate_with_deepl(clean_text, source_text_for_context=clean_text)
                                     else:
                                         start_time = time.time()
@@ -5140,35 +4704,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
                                         log_error("Translation failed after retries", trans_error)
                                         translated_text = None
                     
-                    # Cache result
+                    # Cache result - simple dict cache
                     if translated_text and not self.is_error_message(translated_text):
                         translated_text = self.post_process_translation_text(translated_text)
                         translated_text = self.format_dialog_text(translated_text)
                         
-                        # Store in unified cache (primary)
-                        try:
-                            self.unified_cache.store(
-                                clean_text, 
-                                self.source_language, 
-                                self.target_language, 
-                                translator_name,
-                                translated_text
-                            )
-                        except Exception as cache_err:
-                            log_error("Error storing translation to unified cache", cache_err)
-                        
-                        # Also store in cache_manager for backward compatibility
-                        if self.cache_manager:
-                            try:
-                                self.cache_manager.store(clean_text, self.source_language, self.target_language, translated_text, translator_name)
-                            except Exception as cache_err:
-                                log_error("Error storing translation to cache_manager", cache_err)
-                        
-                        # Also store in old translation_cache for backward compatibility
+                        # Store in simple cache
                         cache_key = clean_text.lower().strip()
                         self.translation_cache[cache_key] = translated_text
                         
-                        # Limit cache size - tối ưu cho long sessions
+                        # Limit cache size
                         if len(self.translation_cache) > self.max_cache_size:
                             # Xóa 20% cache cũ nhất (LRU-like)
                             keys_to_remove = list(self.translation_cache.keys())[:int(self.max_cache_size * 0.2)]

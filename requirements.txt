@@ -9,26 +9,15 @@ Pillow>=10.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 
-# OCR
+# OCR - CPU-only mode (optimal for real-time gaming)
 pytesseract>=0.3.10
 easyocr>=1.7.0
-# Note: easyocr automatically installs torch (CPU-only)
-# For GPU support, install PyTorch with CUDA separately:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-# Or run: install_pytorch_cuda.bat
+# Note: easyocr automatically installs torch (CPU version)
+# CPU-only mode provides better real-time performance for gaming translations
 
 # Translation
 deep-translator>=1.11.4
 deepl>=1.12.0
-
-# Local translation with MarianMT (GPU-accelerated neural MT)
-# Eliminates API delay (200-2000ms) → 50-200ms local translation
-transformers>=4.18.0
-torch>=1.10.0
-sentencepiece>=0.1.96
-# Note: For GPU support, also install CUDA version:
-# pip install torch --index-url https://download.pytorch.org/whl/cu130
-# Models download on first use (~300MB per language pair)
 
 # Optional: Encoding detection for cache files
 chardet>=5.0.0
@@ -38,7 +27,4 @@ imagehash>=4.3.1
 
 # Global hotkeys support
 pynput>=1.7.6
-
-# Text similarity for advanced deduplication
-# difflib is built-in, no need to install
 

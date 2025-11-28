@@ -3,7 +3,7 @@ import re
 from .logger import log_debug, log_error
 
 def split_into_sentences(text, max_sentences_per_batch=10):
-    """Tách text thành các câu"""
+    """Tách text thành các câu, preserve emotion markers và dialogue patterns"""
     try:
         if not text or len(str(text).strip()) < 2:
             return []
@@ -13,8 +13,10 @@ def split_into_sentences(text, max_sentences_per_batch=10):
             if not text or len(text.strip()) < 2:
                 return []
         
-        # Split by sentence boundaries: . ! ? ... or …
+        # Split by sentence boundaries: . ! ? ~ ... or …
         # Keep the punctuation with the sentence
+        # Note: Không split tại ~ nếu nó là emotion marker (Hi~, Thanks~)
+        # Chỉ split tại . ! ? và ellipsis (...)
         sentence_pattern = r'([.!?…]+[\s\n]*)'
         parts = re.split(sentence_pattern, text)
         
@@ -212,13 +214,13 @@ def translate_batch_deepl(deepl_client, sentences, target_lang, max_retries=2):
         log_error("Error in DeepL batch translation", e)
         return None
 
-def should_use_batch_translation(text, min_sentences=2):
+def should_use_batch_translation(text, min_sentences=3):
     """
     Determine if batch translation should be used.
     
     Args:
         text: Text to check
-        min_sentences: Minimum number of sentences to use batch
+        min_sentences: Minimum number of sentences to use batch (default 3)
     
     Returns:
         True if batch translation should be used
@@ -226,9 +228,10 @@ def should_use_batch_translation(text, min_sentences=2):
     if not text or len(text.strip()) < 10:
         return False
     
-    # Count sentences
+    # Count sentences (không đếm ~ vì là emotion marker, chỉ đếm . ! ? ...)
     sentence_count = len(re.findall(r'[.!?…]+', text))
     
-    # Use batch if we have multiple sentences or text is long
-    return sentence_count >= min_sentences or len(text) > 200
+    # Use batch if we have 3+ sentences or text is very long (>1000 chars)
+    # Với 1-2 câu ngắn, dịch trực tiếp nhanh hơn
+    return sentence_count >= min_sentences or len(text) > 1000
 

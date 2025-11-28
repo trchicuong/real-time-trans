@@ -29,12 +29,19 @@ class TextValidator:
         # Pattern cho ellipsis trong dialogue (..., .., ……)
         self.ellipsis_pattern = re.compile(r'\.{2,}|…+')
         
-        # Pattern cho exclamations (!!!, ???, !?, ...)
-        self.exclamation_pattern = re.compile(r'[!?]{1,}')
+        # Pattern cho exclamations (!!!, ???, !?, ...) và emotion tilde (~)
+        self.exclamation_pattern = re.compile(r'[!?~]{1,}')
         
         # Pattern cho dialogue với dấu gạch (oh-oh, well-well, uh-huh)
         self.hyphenated_dialogue_pattern = re.compile(
             r'\b\w{2,}[-]\w{2,}\b',  # oh-oh, uh-huh
+            re.IGNORECASE
+        )
+        
+        # Pattern cho emotion markers trong game dialogue
+        # [action], (sound), **emotion**, *emphasis*
+        self.emotion_marker_pattern = re.compile(
+            r'\[[^\]]+\]|\([^\)]+\)|\*+[^\*]+\*+',  # [text], (text), **text**, *text*
             re.IGNORECASE
         )
         
@@ -82,9 +89,10 @@ class TextValidator:
             has_contraction = self.contraction_pattern.search(text) is not None
             has_ellipsis = self.ellipsis_pattern.search(text) is not None
             has_hyphenated = self.hyphenated_dialogue_pattern.search(text) is not None
+            has_emotion_markers = self.emotion_marker_pattern.search(text) is not None
             
-            # Nếu có dialogue patterns, chắc chắn là dialogue hợp lệ
-            if has_stutter or has_contraction or has_hyphenated:
+            # Nếu có dialogue patterns (bao gồm emotion markers), chắc chắn là dialogue hợp lệ
+            if has_stutter or has_contraction or has_hyphenated or has_emotion_markers:
                 log_debug(f"Valid dialogue pattern detected: '{text[:50]}...'")
                 return True
             
@@ -188,8 +196,11 @@ class TextValidator:
                 return True
             
             # Đếm alphanumeric vs special chars
-            alphanumeric_count = sum(1 for c in text if c.isalnum() or c.isspace())
-            special_count = len(text) - alphanumeric_count
+            # NHƯNG loại trừ emotion markers ([...], (...), **...**) khỏi special chars count
+            text_without_markers = self.emotion_marker_pattern.sub('', text)  # Remove emotion markers
+            
+            alphanumeric_count = sum(1 for c in text_without_markers if c.isalnum() or c.isspace())
+            special_count = len(text_without_markers) - alphanumeric_count
             
             if len(text) == 0:
                 return True

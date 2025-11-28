@@ -24,6 +24,35 @@ class DeepLContextManager:
         
         log_debug(f"Initialized DeepL context manager with max_context_size={self.max_context_size}")
     
+    def _normalize_for_dedup(self, text):
+        """Normalize text để check duplicate (loại bỏ emotion markers và excess punctuation)"""
+        try:
+            normalized = text.lower().strip()
+            # Loại bỏ emotion markers: [action], (sound), **emotion**
+            normalized = re.sub(r'\[[^\]]+\]|\([^\)]+\)|\*+[^\*]+\*+', '', normalized)
+            # Normalize excess punctuation
+            normalized = re.sub(r'[!]{2,}', '!', normalized)
+            normalized = re.sub(r'[?]{2,}', '?', normalized)
+            normalized = re.sub(r'[~]{2,}', '~', normalized)
+            normalized = re.sub(r'\.{2,}', '.', normalized)
+            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            return normalized
+        except Exception as e:
+            log_error("Error normalizing text for dedup", e)
+            return text.lower().strip()
+    
+    def _clean_text_for_context(self, text):
+        """Clean text để dùng làm context (loại bỏ emotion markers nhưng giữ punctuation)"""
+        try:
+            # Loại bỏ emotion markers: [action], (sound), **emotion**, *emphasis*
+            cleaned = re.sub(r'\[[^\]]+\]|\([^\)]+\)|\*+[^\*]+\*+', '', text)
+            # Loại bỏ excess whitespace
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            return cleaned if cleaned else text
+        except Exception as e:
+            log_error("Error cleaning text for context", e)
+            return text
+    
     def set_context_size(self, size):
         """
         Update context window size.
@@ -81,12 +110,18 @@ class DeepLContextManager:
             if context_size == 0 or not self.context_window:
                 return None
             
-            # Get last N source texts
+            # Get last N source texts và clean chúng (loại bỏ emotion markers)
             context_texts = self.context_window[-context_size:]
+            cleaned_texts = [self._clean_text_for_context(t) for t in context_texts]
+            # Filter out empty texts sau khi clean
+            cleaned_texts = [t for t in cleaned_texts if t and len(t.strip()) > 0]
+            
+            if not cleaned_texts:
+                return None
             
             # Simple concatenation with period separation
             # DeepL expects natural text in source language
-            context_string = ". ".join(context_texts)
+            context_string = ". ".join(cleaned_texts)
             
             # Ensure proper ending
             if context_string and not context_string.endswith('.'):
@@ -122,10 +157,13 @@ class DeepLContextManager:
                     self.current_source_lang = source_lang
                     self.current_target_lang = target_lang
             
-            # Check for duplicate (same as last subtitle)
-            if self.context_window and self.context_window[-1] == source_text:
-                log_debug("Skipping DeepL context update - duplicate source text")
-                return
+            # Check for duplicate (same as last subtitle) - dùng normalized text
+            if self.context_window:
+                normalized_new = self._normalize_for_dedup(source_text)
+                normalized_last = self._normalize_for_dedup(self.context_window[-1])
+                if normalized_new == normalized_last:
+                    log_debug("Skipping DeepL context update - duplicate source text (normalized)")
+                    return
             
             self.context_window.append(source_text)
             
