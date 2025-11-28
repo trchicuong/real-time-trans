@@ -2,6 +2,7 @@
 DeepL Context Window Manager
 Manages context window for DeepL translation to improve dialogue quality
 """
+import re
 from .logger import log_debug, log_error
 
 class DeepLContextManager:

@@ -1589,6 +1589,31 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 return
             
             self.is_paused = not self.is_paused
+            
+            # Hiển thị thông báo trên overlay (thêm vào cuối như kết quả dịch tiếp theo)
+            status_text = "Tạm dừng dịch" if self.is_paused else "Tiếp tục dịch"
+            if hasattr(self, 'translation_text') and self.translation_text:
+                try:
+                    self.translation_text.config(state=tk.NORMAL)
+                    # Lấy nội dung hiện tại
+                    current_text = self.translation_text.get('1.0', tk.END).strip()
+                    # Thêm thông báo vào cuối với spacing giống append mode
+                    if current_text and current_text != "Đang chờ văn bản...":
+                        # Sử dụng spacing giống như append mode (2 dòng trống)
+                        spacing = "\n\n"
+                        self.translation_text.insert(tk.END, spacing + status_text)
+                    else:
+                        self.translation_text.delete('1.0', tk.END)
+                        self.translation_text.insert('1.0', status_text)
+                    self.translation_text.config(state=tk.DISABLED)
+                    # Auto-scroll to bottom để xem thông báo mới
+                    self.translation_text.see(tk.END)
+                except (RuntimeError, tk.TclError):
+                    pass
+            elif hasattr(self, 'translation_label') and self.translation_label:
+                self.translation_label.config(text=status_text)
+            
+            self.log(status_text)
         except Exception as e:
             log_error("Lỗi hotkey pause/resume", e)
 
@@ -1617,6 +1642,31 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.overlay_locked = not self.overlay_locked
             if hasattr(self, 'overlay_lock_var'):
                 self.overlay_lock_var.set(self.overlay_locked)
+            
+            # Hiển thị thông báo trên overlay (thêm vào cuối như kết quả dịch tiếp theo)
+            status_text = "Đã khóa màn hình dịch" if self.overlay_locked else "Đã mở khóa màn hình dịch"
+            if hasattr(self, 'translation_text') and self.translation_text:
+                try:
+                    self.translation_text.config(state=tk.NORMAL)
+                    # Lấy nội dung hiện tại
+                    current_text = self.translation_text.get('1.0', tk.END).strip()
+                    # Thêm thông báo vào cuối với spacing giống append mode
+                    if current_text and current_text != "Đang chờ văn bản...":
+                        # Sử dụng spacing giống như append mode (2 dòng trống)
+                        spacing = "\n\n"
+                        self.translation_text.insert(tk.END, spacing + status_text)
+                    else:
+                        self.translation_text.delete('1.0', tk.END)
+                        self.translation_text.insert('1.0', status_text)
+                    self.translation_text.config(state=tk.DISABLED)
+                    # Auto-scroll to bottom để xem thông báo mới
+                    self.translation_text.see(tk.END)
+                except (RuntimeError, tk.TclError):
+                    pass
+            elif hasattr(self, 'translation_label') and self.translation_label:
+                self.translation_label.config(text=status_text)
+            
+            self.log(status_text)
             self.save_config()
         except Exception as e:
             log_error("Lỗi hotkey toggle lock", e)
