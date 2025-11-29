@@ -77,6 +77,31 @@ class TextValidator:
             if not text:
                 return False
             
+            # Lọc UI elements: số, codes, menu items
+            # Pattern: "223/1", "*223", "[9]", "3 B]", "Quick bar", etc.
+            
+            # Skip nếu text chủ yếu là số với ít chữ cái
+            digit_count = sum(1 for c in text if c.isdigit())
+            letter_count = sum(1 for c in text if c.isalpha())
+            
+            # Nếu > 50% là số và < 5 chữ cái -> UI element
+            if digit_count > len(text) * 0.5 and letter_count < 5:
+                return False
+            
+            # Skip nếu match UI patterns
+            ui_patterns = [
+                r'^[\d\/\*\[\]\s]+$',  # Chỉ số, slash, asterisk, brackets
+                r'^[\*\d\s]+[A-Z]?[\]\)]',  # *223 223 B], *223 223 L9], etc.
+                r'^\[\d+\]',  # [9], [10], etc.
+                r'^\d+\/\d+',  # 223/1, 5/10, etc.
+                r'^[\d\s]+[A-Z]{1,2}\]\s*[A-Z]?$',  # 3 B] R, 223 BB] R, etc.
+                r'^\*+[\d\s]+',  # *223, **123, etc.
+            ]
+            
+            for pattern in ui_patterns:
+                if re.match(pattern, text.strip()):
+                    return False
+            
             # 1. Đếm số chữ cái thực (loại bỏ punctuation, numbers, spaces)
             letter_count = sum(1 for c in text if c.isalpha())
             
@@ -93,7 +118,9 @@ class TextValidator:
             
             # Nếu có dialogue patterns (bao gồm emotion markers), chắc chắn là dialogue hợp lệ
             if has_stutter or has_contraction or has_hyphenated or has_emotion_markers:
-                log_debug(f"Valid dialogue pattern detected: '{text[:50]}...'")
+                # Chỉ log patterns đặc biệt (không log hyphenated vì quá nhiều)
+                if has_stutter or has_emotion_markers:
+                    log_debug(f"Valid dialogue pattern detected: '{text[:50]}...'")
                 return True
             
             # 3. Check interjections (oh, ah, uh, etc.)

@@ -27,6 +27,12 @@ from .text_validator import (
 )
 from .advanced_deduplication import AdvancedDeduplicator
 from .hotkey_manager import HotkeyManager
+from .image_processing import (
+    StrokeWidthTransform,
+    ColorTextExtractor,
+    BackgroundNoiseDetector,
+    AdvancedImageProcessor
+)
 
 __all__ = [
     'log_error',
@@ -48,5 +54,9 @@ __all__ = [
     'TextValidator',
     'AdvancedDeduplicator',
     'HotkeyManager',
+    'StrokeWidthTransform',
+    'ColorTextExtractor',
+    'BackgroundNoiseDetector',
+    'AdvancedImageProcessor',
 ]
 

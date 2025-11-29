@@ -1,5 +1,6 @@
 """
 Tesseract OCR Handler - tối ưu cho free engine
+Tích hợp advanced image processing cho game AAA graphics
 """
 import cv2
 import numpy as np
@@ -9,23 +10,27 @@ import os
 
 try:
     from modules import log_error, log_debug
+    from modules import AdvancedImageProcessor
+    ADVANCED_PROCESSING_AVAILABLE = True
 except ImportError:
     # Fallback if modules not available
     def log_error(msg, exception=None):
         pass
     def log_debug(msg):
         pass
+    ADVANCED_PROCESSING_AVAILABLE = False
 
 
 class TesseractOCRHandler:
     """Handler cho Tesseract OCR với các kỹ thuật tối ưu"""
     
-    def __init__(self, source_language='eng', enable_multi_scale=False, enable_text_region_detection=False):
+    def __init__(self, source_language='eng', enable_multi_scale=False, enable_text_region_detection=False, enable_game_mode=True):
         """
         Args:
             source_language: Ngôn ngữ nguồn cho OCR
             enable_multi_scale: True = enable multi-scale processing (chính xác hơn nhưng chậm hơn)
             enable_text_region_detection: True = enable text region detection (tốn thời gian)
+            enable_game_mode: True = enable advanced game graphics processing (color extraction, noise detection, SWT)
         """
         self.source_language = source_language
         self.cached_prep_mode = None
@@ -33,6 +38,17 @@ class TesseractOCRHandler:
         # Có thể bật/tắt từ UI
         self.enable_text_region_detection = enable_text_region_detection
         self.enable_multi_scale = enable_multi_scale
+        self.enable_game_mode = enable_game_mode
+        
+        # Advanced image processor cho game graphics
+        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode:
+            try:
+                self.advanced_processor = AdvancedImageProcessor()
+            except Exception as e:
+                log_error("Lỗi khởi tạo AdvancedImageProcessor", e)
+                self.advanced_processor = None
+        else:
+            self.advanced_processor = None
         
     def set_source_language(self, lang):
         """Cập nhật source language và reset cache"""
@@ -89,10 +105,38 @@ class TesseractOCRHandler:
         """
         Simplified intelligent preprocessing - giảm ~30-40% processing time
         Tự động chọn strategy dựa trên image quality
+        
+        TỐI ƯU CHO GAME AAA:
+        - Game mode: Color extraction → Noise detection → Advanced denoising
+        - Standard mode: Legacy preprocessing
         """
         if img is None or img.size == 0:
             return np.zeros((10, 10), dtype=np.uint8)
         
+        # GAME MODE: Advanced preprocessing pipeline
+        if self.enable_game_mode and self.advanced_processor:
+            try:
+                # Full game graphics processing: color extraction + noise detection + adaptive denoising
+                processed, info = self.advanced_processor.process_for_game_ocr(img, mode='auto')
+                
+                # Apply final thresholding
+                if mode == 'adaptive':
+                    if block_size % 2 == 0:
+                        block_size += 1
+                    processed = cv2.adaptiveThreshold(
+                        processed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv2.THRESH_BINARY_INV, block_size, c_value
+                    )
+                elif mode == 'binary':
+                    _, processed = cv2.threshold(processed, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                
+                return processed
+                
+            except Exception as e:
+                log_error("Lỗi advanced preprocessing, fallback về standard", e)
+                # Fallback về standard preprocessing
+        
+        # STANDARD MODE: Legacy preprocessing
         if len(img.shape) == 3:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         else:

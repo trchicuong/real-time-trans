@@ -1,4 +1,4 @@
-"""EasyOCR Handler cho OCR"""
+"""EasyOCR Handler cho OCR - Tối ưu cho game AAA graphics"""
 import time
 import numpy as np
 from PIL import Image
@@ -8,11 +8,14 @@ import cv2
 
 try:
     from modules import log_error, log_debug
+    from modules import AdvancedImageProcessor
+    ADVANCED_PROCESSING_AVAILABLE = True
 except ImportError:
     def log_error(msg, exception=None):
         pass
     def log_debug(msg):
         pass
+    ADVANCED_PROCESSING_AVAILABLE = False
 
 EASYOCR_AVAILABLE = False
 try:
@@ -26,7 +29,7 @@ except ImportError:
 class EasyOCRHandler:
     """Handler cho EasyOCR với hỗ trợ CPU/GPU"""
     
-    def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False):
+    def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False, enable_game_mode=True):
         """Khởi tạo handler - CPU-ONLY mode"""
         self.source_language = source_language
         self.reader = None
@@ -53,6 +56,19 @@ class EasyOCRHandler:
         
         # Multi-scale processing - có thể bật/tắt từ UI
         self.enable_multi_scale = enable_multi_scale
+        
+        # Game mode - advanced preprocessing
+        self.enable_game_mode = enable_game_mode
+        
+        # Advanced image processor cho game graphics
+        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode:
+            try:
+                self.advanced_processor = AdvancedImageProcessor()
+            except Exception as e:
+                log_error("Lỗi khởi tạo AdvancedImageProcessor", e)
+                self.advanced_processor = None
+        else:
+            self.advanced_processor = None
         
         # Frame counter for stats
         self.frame_count = 0
@@ -595,15 +611,31 @@ class EasyOCRHandler:
     
     def _preprocess_for_easyocr(self, img):
         """
-        Preprocessing cho EasyOCR với FAST PATH optimization
-        CRITICAL FIX: Check image quality trước, skip heavy processing cho ảnh đẹp
+        Preprocessing cho EasyOCR với FAST PATH optimization + Game Mode
+        
+        GAME MODE: Color extraction → Noise detection → Adaptive denoising
+        STANDARD MODE: Quality-based preprocessing (fast path vs full)
         
         Neural networks thích contrast cao, ít thích heavy morphology
-        Balance cho cấu hình tầm trung: giảm aggressive preprocessing
-        
-        NEW: Morphology operations, bilateral filter, auto-scaling cho small text
         """
         try:
+            # GAME MODE: Advanced preprocessing pipeline
+            if self.enable_game_mode and self.advanced_processor:
+                try:
+                    # Full game graphics processing: color extraction + noise detection + adaptive denoising
+                    processed, info = self.advanced_processor.process_for_game_ocr(img, mode='auto')
+                    
+                    # EasyOCR-specific enhancement: light CLAHE only
+                    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+                    processed = clahe.apply(processed)
+                    
+                    return processed
+                    
+                except Exception as e:
+                    log_error("Lỗi advanced preprocessing, fallback về standard", e)
+                    # Fallback về standard preprocessing
+            
+            # STANDARD MODE: Legacy preprocessing
             # Convert to grayscale if needed
             if len(img.shape) == 3:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -618,7 +650,6 @@ class EasyOCRHandler:
                 new_w = int(w * scale_factor)
                 new_h = int(h * scale_factor)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-                # Removed log spam: scale applied silently
             
             # FAST PATH: Check image quality trước
             quality_info = self._detect_image_quality(gray)

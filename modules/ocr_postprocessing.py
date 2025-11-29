@@ -71,6 +71,15 @@ def post_process_ocr_text_general(text, lang='auto'):
         cleaned = re.sub(r'\.\s+l\s', '. I ', cleaned)
         cleaned = re.sub(r'!\s+l\s', '! I ', cleaned)
         cleaned = re.sub(r'\?\s+l\s', '? I ', cleaned)
+
+        # Fix "l" sau comma -> "I"
+        cleaned = re.sub(r',\s+l\s', ', I ', cleaned)
+        
+        # Fix common game words với l/I confusion
+        # wilI -> will, alI -> all, etc.
+        cleaned = re.sub(r'\b([Ww])il([I|l])\b', r'\1ill', cleaned)  # wilI -> will
+        cleaned = re.sub(r'\bal([I|l])\b', 'all', cleaned, flags=re.IGNORECASE)  # alI -> all
+        cleaned = re.sub(r'\bwi([I|l])([I|l])\b', 'will', cleaned, flags=re.IGNORECASE)  # wilI -> will
         
         ocr_errors = {
             '\u201E': '"',  # Double low-9 quotation mark

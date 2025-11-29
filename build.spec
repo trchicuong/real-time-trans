@@ -52,6 +52,8 @@ a = Analysis(
         'modules.text_validator',
         'modules.advanced_deduplication',
         'modules.hotkey_manager',
+        # Advanced image processing for Game Mode
+        'modules.image_processing',
         # Handlers package
         'handlers',
         'handlers.tesseract_ocr_handler',
