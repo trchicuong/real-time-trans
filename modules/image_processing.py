@@ -365,7 +365,7 @@ class AdvancedImageProcessor:
         
         Args:
             img: Input image (BGR hoặc grayscale)
-            mode: 'auto', 'color_first', 'swt_first', 'aggressive'
+            mode: 'auto', 'fast', 'color_first', 'swt_first', 'aggressive'
         
         Returns:
             (processed_img, info_dict)
@@ -375,14 +375,30 @@ class AdvancedImageProcessor:
                 'noise_level': 0.0,
                 'color_coverage': 0.0,
                 'swt_applied': False,
-                'aggressive_denoise': False
+                'aggressive_denoise': False,
+                'fast_path': False
             }
             
             # Convert sang BGR nếu cần
             if len(img.shape) == 2:
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                gray = img.copy()
             else:
                 img_bgr = img.copy()
+                gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            
+            # FAST PATH: Ảnh chất lượng cao (contrast tốt, ít noise) → skip processing
+            if mode == 'auto' or mode == 'fast':
+                contrast = gray.std()
+                blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+                
+                # High quality: contrast > 50, sharp (blur_score > 200)
+                if contrast > 50 and blur_score > 200:
+                    info['fast_path'] = True
+                    # Chỉ CLAHE nhẹ, skip color extraction và denoising
+                    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+                    result = clahe.apply(gray)
+                    return result, info
             
             # Step 1: Color-based extraction (nếu có màu)
             color_extracted, color_mask = self.color_extractor.extract_dominant_text_color(img_bgr)

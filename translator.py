@@ -30,6 +30,18 @@ if os.name == 'nt':
                     f.write("-" * 80 + "\n")
             except Exception:
                 pass  # If all fails, continue without DPI awareness
+    
+    # Set process priority ABOVE_NORMAL để không bị OS throttle khi game fullscreen
+    try:
+        import ctypes
+        # ABOVE_NORMAL_PRIORITY_CLASS = 0x8000
+        # HIGH_PRIORITY_CLASS = 0x80 (không nên dùng - có thể ảnh hưởng game)
+        ctypes.windll.kernel32.SetPriorityClass(
+            ctypes.windll.kernel32.GetCurrentProcess(),
+            0x8000  # ABOVE_NORMAL_PRIORITY_CLASS
+        )
+    except Exception:
+        pass  # Không critical nếu thất bại
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -263,14 +275,16 @@ class ScreenTranslator:
         self.tesseract_text_region_detection = False  # Default: disabled (tốn thời gian)
         
         # Game Mode - Advanced preprocessing cho game AAA graphics
-        self.enable_game_mode = True  # Default: enabled (color extraction, noise detection, adaptive denoising)
+        self.enable_game_mode = False  # Default: TẮT để tiết kiệm CPU
+        self.game_mode_fast = True  # Default: BỊT - dùng CLAHE only, rất nhanh
         
         if HANDLERS_AVAILABLE:
             self.tesseract_handler = TesseractOCRHandler(
                 source_language=self.source_language,
                 enable_multi_scale=self.tesseract_multi_scale,
                 enable_text_region_detection=self.tesseract_text_region_detection,
-                enable_game_mode=self.enable_game_mode
+                enable_game_mode=self.enable_game_mode,
+                game_mode_fast=self.game_mode_fast
             )
             self.easyocr_handler = None  # Sẽ khởi tạo khi cần (CPU-only)
         else:
@@ -330,15 +344,20 @@ class ScreenTranslator:
         self.pending_translation = None
         self.translation_lock = threading.Lock()
         
-        # Text stability và similarity tracking
+        # Text stability tracking
         self.text_stability_counter = 0
         self.previous_text = ""
-        self.similar_texts_count = 0
-        self.prev_ocr_text = ""
         self.last_processed_subtitle = None
         self.last_successful_translation_time = 0.0
-        self.stable_threshold = 2  # Text stability threshold - wait for 2 consecutive reads before translation
+        self.stable_threshold = 1  # IMMEDIATE translation - no warmup delay!
         self.min_translation_interval = 0.03  # Giảm xuống 0.03s cho response nhanh hơn (cache hits)
+        
+        # TYPEWRITER EFFECT DETECTION - cho game có chữ xuất hiện từ từ
+        self.typewriter_detection = True  # Bật phát hiện typewriter effect
+        self.typewriter_last_text = ""  # Text lần trước để so sánh
+        self.typewriter_last_change_time = 0.0  # Thời điểm text thay đổi lần cuối
+        self.typewriter_settle_time = 0.28  # Chờ 280ms sau khi text ngừng thay đổi mới dịch (giảm từ 350ms)
+        self.typewriter_growing = False  # Flag: text đang "growing" (đang được đánh máy)
         
         # Threading infrastructure
         self.is_running = False  # Flag để control threads
@@ -359,10 +378,13 @@ class ScreenTranslator:
         self.last_displayed_translation_sequence = 0
         self.active_ocr_calls = set()
         self.active_translation_calls = set()
+        self.translation_call_timestamps = {}  # Track thời gian bắt đầu mỗi call
         # Tăng concurrent calls để xử lý nhanh hơn
         self.max_concurrent_ocr_calls = 8
-        # Giảm concurrent translation calls để tránh quá tải với text dài
-        self.max_concurrent_translation_calls = 3
+        # Tăng concurrent translation calls lên 8 để tránh block khi API chậm
+        # Với DeepL/Google có thể handle nhiều concurrent requests
+        self.max_concurrent_translation_calls = 8
+        self.translation_call_timeout = 60  # Timeout 60s cho mỗi translation call
         
         # Giới hạn độ dài text để tránh xử lý quá tải (tăng để giữ độ chính xác)
         self.max_text_length_for_translation = 400  # Ký tự (tăng từ 300)
@@ -442,7 +464,8 @@ class ScreenTranslator:
                         source_language=self.source_language,
                         use_gpu=self.easyocr_use_gpu,
                         enable_multi_scale=self.easyocr_multi_scale,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
                 except Exception as e:
                     log_error("Lỗi khởi tạo EasyOCR handler", e)
@@ -896,13 +919,52 @@ class ScreenTranslator:
         # Game Mode Toggle - áp dụng cho tất cả OCR engines
         self.game_mode_row = 5
         self.game_mode_var = tk.BooleanVar(value=self.enable_game_mode)
+        self.game_mode_fast_var = tk.BooleanVar(value=self.game_mode_fast)
+        
+        # Frame chứa checkbox + hint
+        game_mode_frame = ttk.Frame(settings_frame)
+        game_mode_frame.grid(row=self.game_mode_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        
         game_mode_check = ttk.Checkbutton(
-            settings_frame,
+            game_mode_frame,
             text="Bật Game Mode (Tối ưu cho game AAA với đồ họa phức tạp)",
             variable=self.game_mode_var,
             command=self.on_game_mode_change
         )
-        game_mode_check.grid(row=self.game_mode_row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        game_mode_check.pack(side=tk.TOP, anchor=tk.W)
+        
+        # Game Mode Fast checkbox (chỉ hiện khi Game Mode bật)
+        self.game_mode_fast_frame = ttk.Frame(game_mode_frame)
+        self.game_mode_fast_frame.pack(side=tk.TOP, anchor=tk.W, padx=20)
+        
+        self.game_mode_fast_check = ttk.Checkbutton(
+            self.game_mode_fast_frame,
+            text="Fast Mode (CLAHE only - rất nhanh, phù hợp đa số game)",
+            variable=self.game_mode_fast_var,
+            command=self.on_game_mode_fast_change
+        )
+        self.game_mode_fast_check.pack(side=tk.TOP, anchor=tk.W)
+        
+        # Hint cho Fast Mode
+        self.game_mode_fast_hint = tk.Label(
+            self.game_mode_fast_frame,
+            text="Tắt để dùng Full Mode (color extraction + noise detection) - chậm hơn nhưng ổn định hơn",
+            font=("Arial", 8),
+            fg="gray"
+        )
+        self.game_mode_fast_hint.pack(side=tk.TOP, anchor=tk.W)
+        
+        # Ẩn/hiện Fast Mode dựa vào Game Mode
+        self._update_game_mode_fast_visibility()
+        
+        # Hint text giải thích Game Mode
+        game_mode_hint = tk.Label(
+            game_mode_frame,
+            text="Khuyên dùng: Giảm nhiễu text, ổn định hơn khi chơi game.",
+            font=("Arial", 8),
+            fg="green"
+        )
+        game_mode_hint.pack(side=tk.TOP, anchor=tk.W, padx=20)
         
         self.tesseract_options_row = 6
         self.tesseract_options_frame = ttk.Frame(settings_frame)
@@ -1409,10 +1471,9 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
       - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
    
    4. GAME MODE (Tối ưu cho game AAA):
-      - BẬT (mặc định): Advanced preprocessing cho game có đồ họa phức tạp
-      - Tăng độ chính xác OCR 40-60% với game AAA graphics
-      - Trade-off: Chậm hơn 30-50ms mỗi frame
-      - Khuyến nghị: BẬT cho game modern, TẮT nếu cần tốc độ tuyệt đối
+      - BẬT (khuyến nghị): Preprocessing tối ưu cho game graphics
+      - Fast Mode BẬT (mặc định): rất nhanh (~5-10ms)
+      - Fast Mode TẮT: chậm hơn nhưng ổn định hơn
    
    5. EASYOCR MODE (chỉ khi chọn EasyOCR):
       - CPU-only mode (tối ưu nhất cho real-time gaming)
@@ -1944,7 +2005,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.tesseract_text_region_detection = config.get('tesseract_text_region_detection', False)
             
             # Load Game Mode setting
-            self.enable_game_mode = config.get('enable_game_mode', True)
+            self.enable_game_mode = config.get('enable_game_mode', False)  # Default: TẮT
+            self.game_mode_fast = config.get('game_mode_fast', True)  # Default: BẬT (fast mode)
             self.base_scan_interval = int(self.update_interval * 1000)
             if not self.overload_detected:
                 self.current_scan_interval = self.base_scan_interval
@@ -2035,6 +2097,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 'tesseract_multi_scale': self.tesseract_multi_scale,
                 'tesseract_text_region_detection': self.tesseract_text_region_detection,
                 'enable_game_mode': self.enable_game_mode,
+                'game_mode_fast': self.game_mode_fast,
                 'custom_tesseract_path': tesseract_path_to_save,
                 'deepl_api_key': self.deepl_api_key,
                 'use_deepl': self.use_deepl,
@@ -2249,7 +2312,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     source_language=self.source_language,
                     enable_multi_scale=self.tesseract_multi_scale,
                     enable_text_region_detection=self.tesseract_text_region_detection,
-                    enable_game_mode=self.enable_game_mode
+                    enable_game_mode=self.enable_game_mode,
+                    game_mode_fast=self.game_mode_fast
                 )
             except Exception as e:
                 log_error("Lỗi khởi tạo Tesseract handler khi đổi ngôn ngữ", e)
@@ -2264,7 +2328,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         source_language=self.source_language,
                         use_gpu=self.easyocr_use_gpu,
                         enable_multi_scale=self.easyocr_multi_scale,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
                 except Exception as e:
                     log_error("Lỗi khởi tạo EasyOCR handler khi đổi ngôn ngữ", e)
@@ -2313,7 +2378,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         source_language=self.source_language,
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
                 except Exception as e:
                     log_error("Lỗi khởi tạo Tesseract handler khi chuyển engine", e)
@@ -2327,7 +2393,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                             source_language=self.source_language,
                             use_gpu=self.easyocr_use_gpu,
                             enable_multi_scale=self.easyocr_multi_scale,
-                            enable_game_mode=self.enable_game_mode
+                            enable_game_mode=self.enable_game_mode,
+                            game_mode_fast=self.game_mode_fast
                         )
                     except Exception as e:
                         log_error(f"Lỗi khởi tạo EasyOCR handler khi chuyển engine", e)
@@ -2399,7 +2466,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                             source_language=self.source_language,
                             use_gpu=False,  # Force CPU-only
                             enable_multi_scale=self.easyocr_multi_scale,
-                            enable_game_mode=self.enable_game_mode
+                            enable_game_mode=self.enable_game_mode,
+                            game_mode_fast=self.game_mode_fast
                         )
                 except Exception as e:
                     log_error(f"Lỗi cập nhật EasyOCR Multi-scale setting", e)
@@ -2425,7 +2493,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         source_language=self.source_language,
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
             except Exception as e:
                 log_error(f"Lỗi cập nhật Tesseract Multi-scale setting", e)
@@ -2451,7 +2520,8 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         source_language=self.source_language,
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
             except Exception as e:
                 log_error(f"Lỗi cập nhật Tesseract Text Region Detection setting", e)
@@ -2470,8 +2540,9 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 # Update Tesseract handler
                 if self.tesseract_handler:
                     self.tesseract_handler.enable_game_mode = self.enable_game_mode
-                    # Re-initialize advanced processor
-                    if self.enable_game_mode:
+                    self.tesseract_handler.game_mode_fast = self.game_mode_fast
+                    # Re-initialize advanced processor chỉ khi không dùng fast mode
+                    if self.enable_game_mode and not self.game_mode_fast:
                         try:
                             from modules import AdvancedImageProcessor
                             self.tesseract_handler.advanced_processor = AdvancedImageProcessor()
@@ -2485,14 +2556,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         source_language=self.source_language,
                         enable_multi_scale=self.tesseract_multi_scale,
                         enable_text_region_detection=self.tesseract_text_region_detection,
-                        enable_game_mode=self.enable_game_mode
+                        enable_game_mode=self.enable_game_mode,
+                        game_mode_fast=self.game_mode_fast
                     )
                 
                 # Update EasyOCR handler nếu đã được khởi tạo
                 if self.easyocr_handler:
                     self.easyocr_handler.enable_game_mode = self.enable_game_mode
-                    # Re-initialize advanced processor
-                    if self.enable_game_mode:
+                    self.easyocr_handler.game_mode_fast = self.game_mode_fast
+                    # Re-initialize advanced processor chỉ khi không dùng fast mode
+                    if self.enable_game_mode and not self.game_mode_fast:
                         try:
                             from modules import AdvancedImageProcessor
                             self.easyocr_handler.advanced_processor = AdvancedImageProcessor()
@@ -2501,11 +2574,63 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     else:
                         self.easyocr_handler.advanced_processor = None
                 
+                mode_type = "Fast" if self.game_mode_fast else "Full"
                 status = "BẬT" if self.enable_game_mode else "TẮT"
-                self.log(f"Đã {status} Game Mode (Advanced preprocessing cho game graphics).")
+                self.log(f"Đã {status} Game Mode ({mode_type}).")
                 
             except Exception as e:
                 log_error(f"Lỗi cập nhật Game Mode setting", e)
+        
+        # Cập nhật visibility của Fast Mode checkbox
+        self._update_game_mode_fast_visibility()
+    
+    def on_game_mode_fast_change(self):
+        """Callback khi người dùng thay đổi Game Mode Fast setting"""
+        if not hasattr(self, 'game_mode_fast_var'):
+            return
+        
+        self.game_mode_fast = self.game_mode_fast_var.get()
+        self.save_config()
+        
+        # Cập nhật handlers
+        if HANDLERS_AVAILABLE:
+            try:
+                if self.tesseract_handler:
+                    self.tesseract_handler.game_mode_fast = self.game_mode_fast
+                    # Re-initialize advanced processor nếu cần
+                    if self.enable_game_mode and not self.game_mode_fast:
+                        try:
+                            from modules import AdvancedImageProcessor
+                            self.tesseract_handler.advanced_processor = AdvancedImageProcessor()
+                        except Exception as e:
+                            log_error("Lỗi khởi tạo AdvancedImageProcessor cho Tesseract", e)
+                    else:
+                        self.tesseract_handler.advanced_processor = None
+                
+                if self.easyocr_handler:
+                    self.easyocr_handler.game_mode_fast = self.game_mode_fast
+                    if self.enable_game_mode and not self.game_mode_fast:
+                        try:
+                            from modules import AdvancedImageProcessor
+                            self.easyocr_handler.advanced_processor = AdvancedImageProcessor()
+                        except Exception as e:
+                            log_error("Lỗi khởi tạo AdvancedImageProcessor cho EasyOCR", e)
+                    else:
+                        self.easyocr_handler.advanced_processor = None
+                
+                mode_type = "Fast" if self.game_mode_fast else "Full"
+                self.log(f"Đã chuyển sang Game Mode {mode_type}.")
+                
+            except Exception as e:
+                log_error(f"Lỗi cập nhật Game Mode Fast setting", e)
+    
+    def _update_game_mode_fast_visibility(self):
+        """Ẩn/hiện Fast Mode checkbox dựa vào Game Mode có bật hay không"""
+        if hasattr(self, 'game_mode_fast_frame'):
+            if self.enable_game_mode:
+                self.game_mode_fast_frame.pack(side=tk.TOP, anchor=tk.W, padx=20)
+            else:
+                self.game_mode_fast_frame.pack_forget()
     
     def initialize_easyocr_reader(self):
         """Khởi tạo EasyOCR reader (lazy initialization) - chỉ dùng khi không có handlers
@@ -2938,10 +3063,10 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 self.ocr_thread_pool.shutdown(wait=False)
                 self.ocr_thread_pool = ThreadPoolExecutor(max_workers=ocr_workers, thread_name_prefix="OCR")
         
-        # Start 3 threads riêng biệt
-        self.capture_thread = threading.Thread(target=self.run_capture_thread, daemon=True)
-        self.ocr_thread = threading.Thread(target=self.run_ocr_thread, daemon=True)
-        self.translation_thread = threading.Thread(target=self.run_translation_thread, daemon=True)
+        # Start 3 threads riêng biệt với tên để dễ debug
+        self.capture_thread = threading.Thread(target=self.run_capture_thread, daemon=True, name="CaptureThread")
+        self.ocr_thread = threading.Thread(target=self.run_ocr_thread, daemon=True, name="OCRThread")
+        self.translation_thread = threading.Thread(target=self.run_translation_thread, daemon=True, name="TranslationThread")
         
         self.capture_thread.start()
         self.ocr_thread.start()
@@ -3011,9 +3136,16 @@ Chúc bạn sử dụng công cụ hiệu quả!
         self.pending_translation = None
         self.text_stability_counter = 0
         self.previous_text = ""
-        self.similar_texts_count = 0
-        self.prev_ocr_text = ""
         self.last_processed_subtitle = None
+        
+        # Reset typewriter detection state
+        self.typewriter_last_text = ""
+        self.typewriter_last_change_time = 0.0
+        self.typewriter_growing = False
+        
+        # Reset translation call tracking
+        self.active_translation_calls.clear()
+        self.translation_call_timestamps.clear()
         
         # Clear DeepL context when stopping translation
         if hasattr(self, 'deepl_context_manager'):
@@ -4005,12 +4137,67 @@ Chúc bạn sử dụng công cụ hiệu quả!
         Kiểm tra độ ổn định văn bản
         Sử dụng text_history để track và so sánh với các lần đọc trước
         Yêu cầu ít nhất stable_threshold lần đọc giống nhau để giảm dịch trùng
+        
+        TYPEWRITER DETECTION: Phát hiện text đang "growing" (hiệu ứng đánh máy trong game)
+        - Nếu text mới dài hơn và BẮT ĐẦU bằng text cũ → đang typewriter
+        - Chờ cho đến khi text ngừng thay đổi (settle_time) mới coi là stable
         """
         try:
             # Dùng dialogue validator thay vì simple length check
             if not text or not is_valid_dialogue_text(text):
                 return False
             
+            now = time.time()
+            
+            # === TYPEWRITER EFFECT DETECTION ===
+            if self.typewriter_detection and self.typewriter_last_text:
+                last_text = self.typewriter_last_text
+                
+                # Phát hiện text đang "growing" - text mới dài hơn và bắt đầu bằng text cũ
+                # Ví dụ: "Hello" → "Hello wo" → "Hello world" → typewriter effect
+                is_growing = (
+                    len(text) > len(last_text) and 
+                    text.startswith(last_text.rstrip())  # rstrip để bỏ space cuối
+                )
+                
+                # Hoặc: text mới chứa text cũ ở đầu (có thể thêm vài ký tự)
+                if not is_growing and len(text) > len(last_text):
+                    # Kiểm tra 90% prefix match (cho phép OCR có chút sai số)
+                    prefix_len = int(len(last_text) * 0.9)
+                    if prefix_len > 5 and text[:prefix_len] == last_text[:prefix_len]:
+                        is_growing = True
+                
+                if is_growing:
+                    # Text đang growing → cập nhật thời điểm thay đổi và chờ
+                    self.typewriter_growing = True
+                    self.typewriter_last_change_time = now
+                    self.typewriter_last_text = text
+                    return False  # Chưa stable - đang typewriter
+                
+                # Text KHÔNG growing - kiểm tra đã settle chưa
+                if self.typewriter_growing:
+                    time_since_last_change = now - self.typewriter_last_change_time
+                    if time_since_last_change < self.typewriter_settle_time:
+                        # Text mới khác hẳn nhưng chưa đủ settle time
+                        # Có thể là đang tiếp tục typewriter hoặc text mới
+                        self.typewriter_last_text = text
+                        return False
+                    else:
+                        # Đã đủ settle time → text đã stable
+                        self.typewriter_growing = False
+                        # Tiếp tục kiểm tra bình thường bên dưới
+                
+                # Phát hiện text mới hoàn toàn khác (câu thoại mới)
+                # Nếu text khác hẳn text cũ → reset typewriter state
+                similarity = self.calculate_text_similarity(text, last_text) if last_text else 0
+                if similarity < 0.3:  # Khác hẳn → câu mới
+                    self.typewriter_growing = False
+                    self.typewriter_last_change_time = now
+            
+            # Cập nhật typewriter_last_text
+            self.typewriter_last_text = text
+            
+            # === ORIGINAL STABILITY LOGIC ===
             # Tính similarity với text gần nhất trong history
             if len(self.text_history) > 0:
                 last_text = self.text_history[-1]
@@ -4242,7 +4429,18 @@ Chúc bạn sử dụng công cụ hiệu quả!
     
     def run_capture_thread(self):
         """Capture thread - chỉ chụp màn hình và đưa vào queue"""
-        log_error("WT: Capture thread started.", None)
+        # Set thread priority cao hơn trên Windows để không bị OS suspend khi game fullscreen
+        if os.name == 'nt':
+            try:
+                import ctypes
+                # THREAD_PRIORITY_ABOVE_NORMAL = 1
+                ctypes.windll.kernel32.SetThreadPriority(
+                    ctypes.windll.kernel32.GetCurrentThread(),
+                    1  # THREAD_PRIORITY_ABOVE_NORMAL
+                )
+            except Exception:
+                pass  # Không critical
+        
         sct = None
         try:
             sct = mss.mss()
@@ -4306,30 +4504,26 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
                 last_cap_time = capture_moment
                 
-                # Hash deduplication với resize 1/4
-                width, height = img.size
-                img_small = img.resize(
-                    (max(1, width//4), max(1, height//4)),
-                    Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
-                )
-                img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
-                
-                # Deduplication: EasyOCR cần skip aggressive hơn (rất nặng CPU)
-                if img_hash == last_cap_hash:
-                    similar_frames += 1
-                    if self.ocr_engine == "easyocr":
-                        # EasyOCR: skip 100% duplicate frames để giảm CPU
-                        time.sleep(min(0.2, current_scan_interval_sec))
-                        continue
-                    else:
-                        # Tesseract: probability skip
-                        skip_probability = min(0.95, 0.5 + (similar_frames * 0.05))
-                        if random.random() < skip_probability:
-                            time.sleep(min(0.1, current_scan_interval_sec * 0.5))
-                            continue
+                # SIMPLIFIED: EasyOCR handler đã có smart hash vùng text
+                # Chỉ cần basic duplicate check ở đây để giảm queue pressure
+                if self.ocr_engine == "easyocr":
+                    # EasyOCR handler sẽ tự hash vùng text - chỉ cần đưa vào queue
+                    pass
                 else:
-                    similar_frames = 0
-                last_cap_hash = img_hash
+                    # Tesseract: hash deduplication nhẹ
+                    width, height = img.size
+                    img_small = img.resize(
+                        (max(1, width//8), max(1, height//8)),
+                        Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
+                    )
+                    img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
+                    if img_hash == last_cap_hash:
+                        similar_frames += 1
+                        if similar_frames > 3:  # Skip sau 3 frames giống
+                            continue
+                    else:
+                        similar_frames = 0
+                    last_cap_hash = img_hash
                 
                 # Đưa vào queue
                 try:
@@ -4344,32 +4538,23 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 log_error("Capture thread error", loop_err)
                 sleep_after_error = current_scan_interval_sec if 'current_scan_interval_sec' in locals() else 0.5
                 time.sleep(max(sleep_after_error, 0.5))
-        
-        try:
-            log_error("WT: Capture thread finished.", None)
-        except Exception as e:
-            # Fallback: print to stderr if log_error fails
-            try:
-                import sys
-                sys.stderr.write(f"Error logging capture thread finish: {e}\n")
-            except Exception:
-                pass  # Ultimate fallback - cannot log
     
     def run_ocr_thread(self):
         """OCR thread - lấy từ queue, xử lý OCR, gọi async translation"""
-        try:
-            log_error("WT: OCR thread started.", None)
-        except Exception as e:
-            # Fallback: print to stderr if log_error fails
+        # Set thread priority cao hơn trên Windows để không bị OS suspend khi game fullscreen
+        if os.name == 'nt':
             try:
-                import sys
-                sys.stderr.write(f"Error logging OCR thread start: {e}\n")
+                import ctypes
+                # THREAD_PRIORITY_ABOVE_NORMAL = 1
+                ctypes.windll.kernel32.SetThreadPriority(
+                    ctypes.windll.kernel32.GetCurrentThread(),
+                    1  # THREAD_PRIORITY_ABOVE_NORMAL
+                )
             except Exception:
-                pass  # Ultimate fallback - cannot log
+                pass  # Không critical
+        
         last_ocr_proc_time = 0
-        min_ocr_interval = 0.03  # Giảm từ 0.05 cho máy mạnh - xử lý nhanh hơn
-        similar_texts_count = 0
-        prev_ocr_text = ""
+        min_ocr_interval = 0.03
         
         while self.is_running:
             now = time.monotonic()
@@ -4397,12 +4582,11 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         break
                     continue
                 
-                # Lấy ảnh từ queue
+                # Lấy ảnh từ queue - timeout ngắn hơn để responsive
                 try:
-                    img = self.ocr_queue.get(timeout=0.5)
+                    img = self.ocr_queue.get(timeout=0.1)
                 except queue.Empty:
-                    time.sleep(0.03)  # Balance: không quá nhanh gây CPU spike
-                    continue
+                    continue  # Không cần sleep, loop sẽ check lại ngay
                 
                 ocr_proc_start_time = time.monotonic()
                 last_ocr_proc_time = ocr_proc_start_time
@@ -4506,23 +4690,14 @@ Chúc bạn sử dụng công cụ hiệu quả!
                     self.previous_text = ""
                     continue
                 
-                # Tính similarity (0.9 threshold) để tracking
-                similarity = self.calculate_text_similarity(text, prev_ocr_text)
-                if similarity > 0.9:
-                    similar_texts_count += 1
-                else:
-                    similar_texts_count = 0
-                    prev_ocr_text = text
+                # SIMPLIFIED: Chỉ dùng advanced_deduplicator (đã có đủ logic)
+                # Bỏ similarity tracking dư thừa - deduplicator đã xử lý
                 
-                # Skip nếu có quá nhiều text tương tự (> 2 và < 1.0s)
-                if similar_texts_count > 2 and (now - self.last_successful_translation_time) < 1.0:
-                    continue
-                
-                # Sử dụng is_text_stable() để kiểm tra độ ổn định text
-                # Hàm này sử dụng text_history và similarity để đánh giá
+                # Dùng is_text_stable() để chờ typewriter effect
                 if self.is_text_stable(text):
                     stable_text = text
                     
+                    # Deduplication check - chỉ cần 1 lần
                     try:
                         is_dup, dup_reason = self.advanced_deduplicator.is_duplicate(
                             stable_text, 
@@ -4531,47 +4706,29 @@ Chúc bạn sử dụng công cụ hiệu quả!
                         )
                         
                         if is_dup:
-                            self.last_successful_translation_time = now
-                            continue
+                            continue  # Skip duplicate, không cần update timestamp
                     except Exception as dedup_err:
-                        log_error("Error in advanced deduplication, continuing anyway", dedup_err)
-                        # Fallback: compare với last_processed_subtitle (old method)
+                        log_error("Error in advanced deduplication", dedup_err)
+                        # Fallback: simple compare
                         if stable_text == self.last_processed_subtitle:
-                            self.last_successful_translation_time = now
                             continue
                     
-                    # Kiểm tra độ dài text - skip nếu quá dài (tránh quá tải)
+                    # Kiểm tra độ dài text
                     if len(stable_text) > self.max_text_length_hard_limit:
-                        log_error(f"Text quá dài ({len(stable_text)} chars), bỏ qua để tránh quá tải")
                         continue
                     
-                    # Tính adaptive translation interval (tối ưu để nhanh hơn)
-                    s_count = len(re.findall(r'[.!?]+', stable_text)) + 1
-                    txt_len = len(stable_text)
-                    # Adaptive interval: text dài hơn cần thời gian lâu hơn
-                    # Tăng interval cho text dài để tránh quá tải
-                    length_factor = 1.0 + (txt_len / 500)  # Mỗi 500 chars tăng 1x interval
-                    adaptive_trans_interval = max(
-                        0.05,  # Giảm từ 0.2 xuống 0.05 để nhanh hơn
-                        min(
-                            self.min_translation_interval * 2,  # Max 2x base interval
-                            self.min_translation_interval * (0.3 + (0.05 * s_count) + (txt_len / 1000)) * length_factor
-                        )
-                    )
+                    # SIMPLIFIED: Translation interval đơn giản
+                    # Chỉ cần 0.1s giữa các translation để tránh spam API
+                    min_trans_gap = 0.1
                     
-                    # Chỉ translate nếu đã đủ thời gian
-                    if (now - self.last_successful_translation_time) >= adaptive_trans_interval:
+                    if (now - self.last_successful_translation_time) >= min_trans_gap:
                         try:
                             # Start async translation
                             self.start_async_translation(stable_text, 0)
-                            # QUAN TRỌNG: Update ngay lập tức để cho phép dialog tiếp theo được xử lý
-                            # (không chờ translation hoàn thành)
                             self.last_successful_translation_time = now
                             self.text_stability_counter = 0
                             self.last_processed_subtitle = stable_text
-                            similar_texts_count = 0
-                            # Clear text history sau khi đã dịch để tránh ảnh hưởng đến text mới
-                            self.text_history = []
+                            # Không clear text_history ở đây - để typewriter detection hoạt động
                         except Exception as start_trans_err:
                             log_error("Error starting async translation", start_trans_err)
             
@@ -4579,29 +4736,21 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 log_error("OCR thread error", e_ocr_loop)
                 self.text_stability_counter = 0
                 self.previous_text = ""
-                time.sleep(0.2)
+                time.sleep(0.1)  # Giảm từ 0.2
         
-        try:
-            log_error("WT: OCR thread finished.", None)
-        except Exception as e:
-            # Fallback: print to stderr if log_error fails
-            try:
-                import sys
-                sys.stderr.write(f"Error logging OCR thread finish: {e}\n")
-            except Exception:
-                pass  # Ultimate fallback - cannot log
-    
     def run_translation_thread(self):
         """Translation thread - xử lý translation từ queue (legacy, ít dùng)"""
-        try:
-            log_error("WT: Translation thread started.", None)
-        except Exception as e:
-            # Fallback: print to stderr if log_error fails
+        # Set thread priority cao hơn trên Windows để không bị OS suspend khi game fullscreen
+        if os.name == 'nt':
             try:
-                import sys
-                sys.stderr.write(f"Error logging translation thread start: {e}\n")
+                import ctypes
+                # THREAD_PRIORITY_ABOVE_NORMAL = 1
+                ctypes.windll.kernel32.SetThreadPriority(
+                    ctypes.windll.kernel32.GetCurrentThread(),
+                    1  # THREAD_PRIORITY_ABOVE_NORMAL
+                )
             except Exception:
-                pass  # Ultimate fallback - cannot log
+                pass  # Không critical
         
         while self.is_running:
             try:
@@ -4624,15 +4773,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
                 log_error("Translation thread error", e)
                 time.sleep(0.2)
         
-        try:
-            log_error("WT: Translation thread finished.", None)
-        except Exception as e:
-            # Fallback: print to stderr if log_error fails
-            try:
-                import sys
-                sys.stderr.write(f"Error logging translation thread finish: {e}\n")
-            except Exception:
-                pass  # Ultimate fallback - cannot log
+
     
     def start_async_translation(self, text_to_translate, ocr_sequence_number):
         """Start async translation processing"""
@@ -4645,11 +4786,22 @@ Chúc bạn sử dụng công cụ hiệu quả!
             self.translation_sequence_counter += 1
             translation_sequence = self.translation_sequence_counter
             
+            # Cleanup stale translation calls (quá timeout)
+            current_time = time.time()
+            stale_calls = [
+                seq for seq, start_time in self.translation_call_timestamps.items()
+                if current_time - start_time > self.translation_call_timeout
+            ]
+            for seq in stale_calls:
+                self.active_translation_calls.discard(seq)
+                self.translation_call_timestamps.pop(seq, None)
+            
             if len(self.active_translation_calls) >= self.max_concurrent_translation_calls:
                 log_debug(f"Skipping translation - too many concurrent calls ({len(self.active_translation_calls)})")
                 return  # Skip if too many concurrent calls
             
             self.active_translation_calls.add(translation_sequence)
+            self.translation_call_timestamps[translation_sequence] = current_time
             
             self.translation_thread_pool.submit(
                 self.process_translation_async,
@@ -4882,6 +5034,7 @@ Chúc bạn sử dụng công cụ hiệu quả!
             log_error("Error in async translation", e)
         finally:
             self.active_translation_calls.discard(translation_sequence)
+            self.translation_call_timestamps.pop(translation_sequence, None)
     
     def process_translation_response(self, translation_result, translation_sequence, original_text, ocr_sequence_number):
         """Process translation response với chronological order enforcement - thread-safe"""

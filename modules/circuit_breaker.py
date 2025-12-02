@@ -1,12 +1,11 @@
 """
 Circuit breaker for network API calls
-Detects network degradation and handles failures gracefully
 """
 import time
 from .logger import log_debug, log_error
 
 class NetworkCircuitBreaker:
-    """Circuit breaker to detect and handle network degradation."""
+    """Circuit breaker nhẹ - chỉ mở khi network thực sự có vấn đề."""
     
     def __init__(self):
         self.failure_count = 0
@@ -14,37 +13,59 @@ class NetworkCircuitBreaker:
         self.last_reset = time.time()
         self.is_open = False
         self.total_calls = 0
+        self.success_count = 0  # Đếm success để auto-close circuit
+        
+        # RELAXED THRESHOLDS - API rất ổn định
+        self.failure_threshold = 15      # 15 failures liên tiếp mới mở (tăng từ 5)
+        self.slow_call_threshold = 30    # 30 slow calls mới mở (tăng từ 10)
+        self.slow_duration = 8.0         # 8s mới coi là slow (tăng từ 3s)
+        self.reset_interval = 120        # Reset mỗi 2 phút (giảm từ 5 phút)
+        self.recovery_success_count = 3  # 3 success liên tiếp → auto close circuit
     
     def record_call(self, duration, success):
-        """Record API call result and determine if circuit should open."""
+        """Ghi nhận kết quả API call - relaxed logic."""
         try:
             self.total_calls += 1
-            
-            # Reset counters every 5 minutes
             current_time = time.time()
-            if current_time - self.last_reset > 300:  # 5 minutes
-                log_debug(f"Circuit breaker stats reset. Previous period: {self.failure_count} failures, {self.slow_call_count} slow calls, {self.total_calls} total")
+            
+            # Reset counters định kỳ
+            if current_time - self.last_reset > self.reset_interval:
                 self.failure_count = 0
                 self.slow_call_count = 0
                 self.total_calls = 0
+                self.success_count = 0
                 self.is_open = False
                 self.last_reset = current_time
             
-            if not success:
+            if success:
+                self.success_count += 1
+                # Reset failure count khi có success (không tích lũy failures rời rạc)
+                self.failure_count = max(0, self.failure_count - 1)
+                
+                # Auto-close circuit nếu đã recover
+                if self.is_open and self.success_count >= self.recovery_success_count:
+                    self.is_open = False
+                    self.failure_count = 0
+                    self.slow_call_count = 0
+                    log_debug("Circuit breaker AUTO-CLOSED sau recovery")
+            else:
                 self.failure_count += 1
-                log_debug(f"Circuit breaker: API failure recorded ({self.failure_count}/5)")
-            elif duration > 3.0:  # Slow call threshold
-                self.slow_call_count += 1
-                log_debug(f"Circuit breaker: Slow call recorded ({duration:.2f}s, {self.slow_call_count}/10)")
+                self.success_count = 0  # Reset success streak
             
-            # Open circuit if too many failures or slow calls
-            if self.failure_count >= 5:
-                self.is_open = True
-                log_debug("Circuit breaker OPEN due to failure threshold - forcing client refresh")
+            # Chỉ đếm slow call khi THỰC SỰ chậm (8s+)
+            if success and duration > self.slow_duration:
+                self.slow_call_count += 1
+            
+            # Mở circuit chỉ khi THỰC SỰ có vấn đề nghiêm trọng
+            if self.failure_count >= self.failure_threshold:
+                if not self.is_open:
+                    self.is_open = True
+                    log_debug(f"Circuit breaker OPEN: {self.failure_count} failures liên tiếp")
                 return True
-            elif self.slow_call_count >= 10:
-                self.is_open = True
-                log_debug("Circuit breaker OPEN due to slow call threshold - forcing client refresh")
+            elif self.slow_call_count >= self.slow_call_threshold:
+                if not self.is_open:
+                    self.is_open = True
+                    log_debug(f"Circuit breaker OPEN: {self.slow_call_count} slow calls (>{self.slow_duration}s)")
                 return True
             
             return False
@@ -53,17 +74,17 @@ class NetworkCircuitBreaker:
             return False
     
     def should_force_refresh(self):
-        """Check if circuit is open and client should be refreshed."""
+        """Kiểm tra có cần refresh client không."""
         return self.is_open
     
     def reset(self):
-        """Manually reset the circuit breaker."""
+        """Reset thủ công circuit breaker."""
         try:
             self.failure_count = 0
             self.slow_call_count = 0
+            self.success_count = 0
             self.is_open = False
             self.last_reset = time.time()
-            log_debug("Circuit breaker manually reset")
         except Exception as e:
             log_error("Error resetting circuit breaker", e)
 

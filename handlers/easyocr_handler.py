@@ -1,4 +1,4 @@
-"""EasyOCR Handler cho OCR - Tối ưu cho game AAA graphics"""
+"""EasyOCR Handler cho OCR"""
 import time
 import numpy as np
 from PIL import Image
@@ -24,44 +24,41 @@ try:
 except ImportError:
     pass
 
-# GPU detection removed - CPU-only mode
 
 class EasyOCRHandler:
-    """Handler cho EasyOCR với hỗ trợ CPU/GPU"""
+    """Handler cho EasyOCR - CPU-only mode"""
     
-    def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False, enable_game_mode=True):
-        """Khởi tạo handler - CPU-ONLY mode"""
+    def __init__(self, source_language='eng', use_gpu=None, enable_multi_scale=False, enable_game_mode=False, game_mode_fast=True):
+        """Khởi tạo handler"""
         self.source_language = source_language
         self.reader = None
         self.last_call_time = 0.0
         self.EASYOCR_AVAILABLE = EASYOCR_AVAILABLE
         
-        # FORCE CPU-ONLY MODE (user confirmed CPU performs better than GPU for EasyOCR)
+        # CPU-only mode
         self.gpu_available = False
         self.gpu_name = None
-        self.gpu_debug_info = "CPU-only mode (forced - better performance than GPU for this use case)"
+        self.gpu_debug_info = "CPU-only mode"
         
-        # Throttling intervals - CPU-only mode, minimal throttling
-        self.min_call_interval = 0.15  # 6-7 FPS for CPU - balanced for responsiveness
-        self.stable_text_interval = 0.3  # When text is stable, slower polling
+        # Throttling - 200ms = 5 FPS max
+        self.min_call_interval = 0.2
         
-        # Smart skip: cache last result để skip nếu text giống
+        # Cache để skip duplicate frames
         self.last_result_text = ""
         self.last_result_hash = None
         
-        # Text stability tracking - MINIMAL buffering for fast response
+        # Text stability
         self.text_stability_buffer = []
-        self.stability_buffer_size = 1  # No buffering - immediate response
-        self.text_change_threshold = 0.90  # 90% - more lenient to catch short dialogues
+        self.stability_buffer_size = 1
+        self.text_change_threshold = 0.85
         
-        # Multi-scale processing - có thể bật/tắt từ UI
+        # Options từ UI
         self.enable_multi_scale = enable_multi_scale
-        
-        # Game mode - advanced preprocessing
         self.enable_game_mode = enable_game_mode
+        self.game_mode_fast = game_mode_fast  # Fast mode = CLAHE only
         
-        # Advanced image processor cho game graphics
-        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode:
+        # Advanced processor cho game mode (chỉ khi không dùng fast mode)
+        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode and not self.game_mode_fast:
             try:
                 self.advanced_processor = AdvancedImageProcessor()
             except Exception as e:
@@ -70,36 +67,23 @@ class EasyOCRHandler:
         else:
             self.advanced_processor = None
         
-        # Frame counter for stats
         self.frame_count = 0
         
-        # CPU Performance Monitoring
-        self.last_ocr_durations = []  # Track OCR execution times
-        self.ocr_duration_window = 10   # Track last 10 OCRs
-        self.high_load_threshold = 0.5  # OCR > 500ms = high load for CPU
-        self.consecutive_high_load = 0  # Counter for consecutive high loads
+        # CPU Load Monitoring
+        self.last_ocr_durations = []
+        self.ocr_duration_window = 5
+        self.high_load_threshold = 0.8  # 800ms = high load
         
-        # Adaptive processing - dynamically adjust based on actual performance
-        self.adaptive_enabled = True
-        self.target_fps = 6.0  # Target OCR FPS for CPU mode (realistic)
-        self.actual_fps = 0.0  # Measured actual FPS
-        self.fps_samples = []
-        self.fps_window = 20  # Calculate FPS over 20 samples
+        # Image quality thresholds
+        self.high_quality_sharpness_threshold = 100.0
+        self.high_quality_contrast_threshold = 40.0
         
-        # Timeout cho OCR operations (giây) - CPU only
-        self.ocr_timeout = 12.0  # CPU needs more time than GPU
+        # OCR settings
+        self.ocr_timeout = 5.0
+        self.max_text_length = 600
         
-        # Max text length để tránh xử lý text quá dài (tăng lên để giữ nhiều text hơn)
-        self.max_text_length = 800  # Ký tự (tăng từ 500 để giữ độ chính xác tốt hơn)
-        
-        # Image quality thresholds cho fast path
-        self.high_quality_sharpness_threshold = 150  # Laplacian variance
-        self.high_quality_contrast_threshold = 50  # Std deviation
-        
-        # Stats tracking
+        # Stats
         self.stats = {
-            'fast_path_count': 0,
-            'full_preprocessing_count': 0,
             'total_ocr_calls': 0,
             'skipped_due_to_throttle': 0
         }
@@ -254,15 +238,12 @@ class EasyOCRHandler:
                         
                         os.environ['PYTHONWARNINGS'] = 'ignore'
                         
-                        # FORCE CPU-ONLY MODE (better performance for this use case)
-                        use_gpu = False
-                        
-                        # CPU-only EasyOCR reader - no GPU code needed
+                        # CPU-only EasyOCR reader
                         self.reader = easyocr.Reader(
                             [easyocr_lang], 
-                            gpu=False,  # Force CPU
+                            gpu=False,
                             verbose=False,
-                            download_enabled=True  # Auto-download model if needed
+                            download_enabled=True
                         )
                 finally:
                     sys.stderr = old_stderr
@@ -280,108 +261,53 @@ class EasyOCRHandler:
     
     def recognize(self, img, confidence_threshold=0.3):
         """
-        Main OCR method với throttling, preprocessing nâng cao và smart skip
-        ENHANCED: Advanced deduplication, text debouncing, adaptive throttling, CPU load detection
-        EasyOCR-specific preprocessing khác với Tesseract
+        Main OCR method - TỐI ƯU cho GAME/CUTSCENE
+        Hash chỉ vùng text (phần dưới) để detect thay đổi subtitle
         """
         self.stats['total_ocr_calls'] += 1
         
-        # Throttle: EasyOCR rất nặng CPU, chỉ gọi theo interval
-        # ADAPTIVE: Điều chỉnh interval dựa trên text stability VÀ CPU load
         now = time.monotonic()
         time_since_last_call = now - self.last_call_time
         
-        # CPU load detection (simplified, no GPU)
-        cpu_under_pressure = self._is_cpu_under_pressure()
-        if cpu_under_pressure:
-            self.consecutive_high_load += 1
-        else:
-            self.consecutive_high_load = 0
-        
-        # Adaptive throttling dựa trên:
-        # 1. Text length của last result
-        # 2. Text stability (nếu text ổn định → throttle nhiều hơn)
-        # 3. CPU pressure (nếu CPU bận → throttle hơn để không giựt game)
-        last_text_len = len(self.last_result_text) if self.last_result_text else 0
-        
-        # Base interval dựa trên text length
-        if last_text_len < 50:
-            base_interval = self.min_call_interval * 0.7  # Tăng từ 0.5 để không bỏ sót
-        elif last_text_len > 200:
-            base_interval = self.min_call_interval * 1.2  # Giảm từ 1.3
-        else:
-            base_interval = self.min_call_interval
-        
-        # Adjust based on text stability - ít aggressive hơn
-        is_stable = self._is_text_stable(self.last_result_text)
-        if is_stable:
-            effective_interval = base_interval * 1.3  # Nhẹ hơn, không dùng stable_text_interval
-        else:
-            effective_interval = base_interval
-        
-        # Adaptive throttling based on actual performance
-        # Measure FPS and adjust interval dynamically
-        if self.adaptive_enabled and len(self.fps_samples) >= 3:
-            # Calculate actual FPS
-            if self.fps_samples:
-                avg_interval = sum(self.fps_samples) / len(self.fps_samples)
-                self.actual_fps = 1.0 / avg_interval if avg_interval > 0 else 0
-                
-                # Adjust throttle based on target vs actual FPS
-                if self.actual_fps < self.target_fps * 0.8:
-                    # Running slower than target - reduce interval
-                    effective_interval *= 0.7
-                elif self.actual_fps > self.target_fps * 1.2:
-                    # Running faster than target - increase interval slightly
-                    effective_interval *= 1.1
-        
-        if cpu_under_pressure:
-            if self.consecutive_high_load >= 5:
-                # CPU consistently under pressure → moderate throttle
-                effective_interval *= 1.4  # 1.4x throttle
-                if self.consecutive_high_load == 5:
-                    log_error(f"[CPU PRESSURE] Moderate throttling activated")
-            elif self.consecutive_high_load >= 2:
-                # CPU occasionally busy → light throttle
-                effective_interval *= 1.15  # 1.15x throttle
-        
-        if time_since_last_call < effective_interval:
+        # THROTTLE cơ bản - không quá 5 FPS
+        if time_since_last_call < self.min_call_interval:
             self.stats['skipped_due_to_throttle'] += 1
-            return ""  # Skip call này để giảm CPU load
+            return self.last_result_text if self.last_result_text else ""
         
-        # Smart skip: Use perceptual hash (imagehash) for better duplicate detection
-        # Much better than MD5 for detecting visually similar frames
+        # Convert to PIL nếu cần
         try:
-            import imagehash
             if isinstance(img, np.ndarray):
                 img_pil = Image.fromarray(img)
             else:
                 img_pil = img
+        except Exception:
+            return self.last_result_text if self.last_result_text else ""
+        
+        # SMART HASH: Chỉ hash vùng TEXT (1/3 dưới ảnh - nơi subtitle thường xuất hiện)
+        # Cutscene thay đổi background nhưng subtitle ở vùng cố định
+        try:
+            import imagehash
+            w, h = img_pil.size
+            # Crop 1/3 dưới (vùng subtitle) - hoặc 40% nếu ảnh nhỏ
+            crop_ratio = 0.35
+            text_region = img_pil.crop((0, int(h * (1 - crop_ratio)), w, h))
             
-            # Use average hash - fast and good for frame comparison
-            # Perceptual hash detects similar images even with small changes
-            img_hash = str(imagehash.average_hash(img_pil, hash_size=8))
+            # Hash vùng text với size nhỏ hơn (nhanh hơn + nhạy hơn với text change)
+            text_hash = str(imagehash.average_hash(text_region, hash_size=12))
             
-            # Skip nếu hash giống (frame không đổi hoặc rất giống)
-            if img_hash == self.last_result_hash:
-                # Frame giống hệt → return cached result ngay
+            if text_hash == self.last_result_hash:
+                # Vùng text giống hệt → skip OCR
                 return self.last_result_text
             
-            self.last_result_hash = img_hash
+            # Text region changed → update hash và chạy OCR
+            self.last_result_hash = text_hash
         except ImportError:
-            # Fallback to MD5 if imagehash not available
-            try:
-                import hashlib
-                w, h = img_pil.size if hasattr(img_pil, 'size') else (img.shape[1], img.shape[0])
-                img_small = img_pil.resize((max(1, w//8), max(1, h//8)), Image.Resampling.NEAREST)
-                if img_small.mode != 'L':
-                    img_small = img_small.convert('L')
-                img_hash = hashlib.md5(img_small.tobytes()).hexdigest()
-                if img_hash == self.last_result_hash:
-                    return self.last_result_text
-                self.last_result_hash = img_hash
-            except Exception as e:
-                log_error("Error computing image hash", e)
+            pass  # Không có imagehash → luôn chạy OCR
+        except Exception:
+            pass  # Lỗi → luôn chạy OCR để safe
+        
+        # Update call time
+        self.last_call_time = now
         
         # Khởi tạo reader nếu chưa có
         reader = self._initialize_reader()
@@ -408,34 +334,45 @@ class EasyOCRHandler:
         # Increment frame counter for stats
         self.frame_count += 1
         
-        # Resize ảnh - standard resize for CPU mode
+        # Resize ảnh - aggressive resize for CPU mode to reduce load
         w, h = img_pil.size
         max_dim = max(w, h)
         
-        max_size = 800  # Standard max size for CPU
+        # GIẢM max_size từ 800 xuống 600 để giảm CPU load
+        # Game text thường to và rõ, không cần resolution cao
+        max_size = 600  # Giảm từ 800, vẫn đủ cho game text
         
         if max_dim > max_size:
             scale = max_size / max_dim
             new_w, new_h = int(w * scale), int(h * scale)
-            img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            # Dùng BILINEAR thay LANCZOS - nhanh hơn nhiều, chất lượng đủ dùng
+            img_pil = img_pil.resize((new_w, new_h), Image.Resampling.BILINEAR)
         
-        # Multi-scale processing - optimized for CPU
-        if self.enable_multi_scale:
-            ocr_start_time = time.monotonic()  # Track start time for multi-scale
+        # Multi-scale processing - TẮT khi CPU cao để tránh overload
+        # Multi-scale chạy OCR 3 lần = 3x CPU load!
+        if self.enable_multi_scale and not self._is_cpu_under_pressure():
+            ocr_start_time = time.monotonic()
             best_result = None
             best_score = 0.0
             
-            scales = [0.7, 1.0, 1.3]
+            # Giảm từ 3 scales xuống 2 scales khi CPU trung bình
+            # Khi CPU thấp mới dùng 3 scales
+            if self._get_avg_ocr_duration() < 0.3:  # OCR nhanh, CPU thoải mái
+                scales = [0.8, 1.0, 1.2]  # 3 scales, range hẹp hơn
+            else:
+                scales = [1.0]  # Chỉ 1 scale khi CPU trung bình
             
             for scale in scales:
                 try:
-                    scaled_w = int(w * scale)
-                    scaled_h = int(h * scale)
-                    if scaled_w < 10 or scaled_h < 10:
-                        continue
-                    
-                    scaled_img = img_pil.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
-                    img_array = np.array(scaled_img)
+                    if scale != 1.0:
+                        scaled_w = int(img_pil.size[0] * scale)
+                        scaled_h = int(img_pil.size[1] * scale)
+                        if scaled_w < 10 or scaled_h < 10:
+                            continue
+                        scaled_img = img_pil.resize((scaled_w, scaled_h), Image.Resampling.BILINEAR)
+                        img_array = np.array(scaled_img)
+                    else:
+                        img_array = np.array(img_pil)
                     
                     results = reader.readtext(img_array)
                     
@@ -460,30 +397,23 @@ class EasyOCRHandler:
                     log_error(f"Error in multi-scale processing (scale={scale})", e)
                     continue
             
-            # Track OCR duration and update FPS samples
+            # Track OCR duration
             ocr_duration = time.monotonic() - ocr_start_time
             self.last_ocr_durations.append(ocr_duration)
             if len(self.last_ocr_durations) > self.ocr_duration_window:
                 self.last_ocr_durations.pop(0)
             
-            # Track actual call interval for FPS calculation
-            actual_interval = now - self.last_call_time
-            self.fps_samples.append(actual_interval)
-            if len(self.fps_samples) > self.fps_window:
-                self.fps_samples.pop(0)
-            
             # Update last call time
             self.last_call_time = time.monotonic()
             
             if best_result:
-                # Basic text normalization
-                best_result = ' '.join(best_result.split())  # Collapse whitespace
+                best_result = ' '.join(best_result.split())
                 best_result = best_result.strip()
                 
-                # Giới hạn độ dài text
                 if len(best_result) > self.max_text_length:
                     best_result = best_result[:self.max_text_length] + "..."
                 self.last_result_text = best_result
+                self.last_successful_ocr_time = time.monotonic()  # Track successful OCR
                 return best_result
             return ""
         
@@ -566,6 +496,7 @@ class EasyOCRHandler:
             
             # Cache result (text thực sự khác)
             self.last_result_text = result_text
+            self.last_successful_ocr_time = time.monotonic()  # Track successful OCR
             
             # Update stability buffer
             self.text_stability_buffer.append(result_text)
@@ -578,16 +509,6 @@ class EasyOCRHandler:
             if len(self.last_ocr_durations) > self.ocr_duration_window:
                 self.last_ocr_durations.pop(0)
             
-            # Track actual call interval for FPS calculation
-            actual_interval = now - self.last_call_time
-            self.fps_samples.append(actual_interval)
-            if len(self.fps_samples) > self.fps_window:
-                self.fps_samples.pop(0)
-            
-            # Log slow OCRs only if very slow (>1s)
-            if ocr_duration > 1.0:
-                log_error(f"[SLOW OCR] {ocr_duration:.1f}s")
-            
             # Update last call time
             self.last_call_time = time.monotonic()
             
@@ -597,29 +518,36 @@ class EasyOCRHandler:
             return ""
     
     def _is_cpu_under_pressure(self):
-        """
-        Kiểm tra CPU có đang under pressure không
-        Dựa trên OCR execution time
-        """
-        # Check recent OCR durations
-        if len(self.last_ocr_durations) >= 3:
-            avg_duration = sum(self.last_ocr_durations[-3:]) / 3
-            if avg_duration > self.high_load_threshold:
-                return True
-        
+        """Kiểm tra CPU có đang bận không (OCR > 800ms)"""
+        if len(self.last_ocr_durations) >= 2:
+            avg_duration = sum(self.last_ocr_durations[-2:]) / 2
+            return avg_duration > self.high_load_threshold
         return False
     
     def _preprocess_for_easyocr(self, img):
         """
         Preprocessing cho EasyOCR với FAST PATH optimization + Game Mode
         
-        GAME MODE: Color extraction → Noise detection → Adaptive denoising
+        GAME MODE FAST: CLAHE only - rất nhanh
+        GAME MODE FULL: Color extraction → Noise detection → Adaptive denoising
         STANDARD MODE: Quality-based preprocessing (fast path vs full)
         
         Neural networks thích contrast cao, ít thích heavy morphology
         """
         try:
-            # GAME MODE: Advanced preprocessing pipeline
+            # GAME MODE FAST: Chỉ CLAHE, rất nhanh
+            if self.enable_game_mode and self.game_mode_fast:
+                if len(img.shape) == 3:
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                else:
+                    gray = img.copy()
+                
+                # CLAHE nhẹ cho EasyOCR
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(gray)
+                return enhanced
+            
+            # GAME MODE FULL: Advanced preprocessing pipeline
             if self.enable_game_mode and self.advanced_processor:
                 try:
                     # Full game graphics processing: color extraction + noise detection + adaptive denoising
@@ -642,52 +570,38 @@ class EasyOCRHandler:
             else:
                 gray = img.copy()
             
-            # AUTO-SCALE: Detect small text và upscale (30-40% improvement cho small text)
+            # AUTO-SCALE: Detect small text và upscale
             h, w = gray.shape[:2]
             if min(h, w) < 300:
-                # Small image/text → upscale to minimum 300px
                 scale_factor = max(300.0 / h, 300.0 / w)
                 new_w = int(w * scale_factor)
                 new_h = int(h * scale_factor)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
             
-            # FAST PATH: Check image quality trước
+            # Check image quality
             quality_info = self._detect_image_quality(gray)
             
-            # High quality image → minimal processing (FAST PATH - giảm 70-80% processing time)
+            # High quality image → minimal processing
             if not quality_info['needs_preprocessing']:
-                self.stats['fast_path_count'] += 1
-                # Chỉ light CLAHE, skip denoising và sharpening
                 clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8, 8))
                 enhanced = clahe.apply(gray)
-                
-                # Light morphology cho high quality (fix fragmented text)
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
                 enhanced = cv2.morphologyEx(enhanced, cv2.MORPH_CLOSE, kernel, iterations=1)
-                
                 return enhanced
             
             # Low/Medium quality → full preprocessing
-            self.stats['full_preprocessing_count'] += 1
-            
-            # Conditional preprocessing dựa trên quality
             if quality_info['quality'] == 'low':
                 # Low quality: aggressive preprocessing
-                # BILATERAL FILTER: Faster than fastNlMeansDenoising (5-10ms vs 15-30ms)
-                # Preserve edges tốt hơn cho game graphics
                 if gray.shape[0] > 200 or gray.shape[1] > 200:
                     gray = cv2.bilateralFilter(gray, d=5, sigmaColor=50, sigmaSpace=50)
                 
-                # Strong CLAHE
                 clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
                 enhanced = clahe.apply(gray)
                 
-                # Sharpening
                 blurred = cv2.GaussianBlur(enhanced, (0, 0), 2.0)
                 sharpened = cv2.addWeighted(enhanced, 1.5, blurred, -0.5, 0)
                 
-                # MORPHOLOGY: Kết nối fragmented text (critical cho game text với effects)
-                # Dilation/closing để merge text pieces
+                # MORPHOLOGY: Kết nối fragmented text
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                 sharpened = cv2.morphologyEx(sharpened, cv2.MORPH_CLOSE, kernel, iterations=2)
                 
@@ -723,21 +637,12 @@ class EasyOCRHandler:
     def get_stats(self) -> dict:
         """Get handler statistics"""
         total_calls = self.stats['total_ocr_calls']
-        if total_calls > 0:
-            fast_path_rate = (self.stats['fast_path_count'] / 
-                            (self.stats['fast_path_count'] + self.stats['full_preprocessing_count'])) * 100 if \
-                            (self.stats['fast_path_count'] + self.stats['full_preprocessing_count']) > 0 else 0
-            skip_rate = (self.stats['skipped_due_to_throttle'] / total_calls) * 100
-        else:
-            fast_path_rate = 0
-            skip_rate = 0
+        skip_rate = (self.stats['skipped_due_to_throttle'] / total_calls * 100) if total_calls > 0 else 0
         
         return {
             **self.stats,
-            'fast_path_rate': fast_path_rate,
             'skip_rate': skip_rate,
-            'gpu_available': self.gpu_available,
-            'gpu_name': self.gpu_name if self.gpu_available else 'N/A'
+            'gpu_available': self.gpu_available
         }
     
     def cleanup(self):

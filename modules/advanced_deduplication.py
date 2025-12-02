@@ -30,7 +30,7 @@ class AdvancedDeduplicator:
                  similarity_threshold=0.85,
                  short_text_threshold=30,
                  time_window=5.0,
-                 max_cache_size=20):
+                 max_cache_size=10):  # Giảm từ 20 xuống 10 để tiết kiệm RAM
         """Khởi tạo deduplicator"""
         self.similarity_threshold = similarity_threshold
         self.short_text_threshold = short_text_threshold
@@ -47,8 +47,7 @@ class AdvancedDeduplicator:
         }
         
         self.imagehash_available = IMAGEHASH_AVAILABLE
-        if not self.imagehash_available:
-            log_error("imagehash library không khả dụng. Sẽ dùng fallback hash method.")
+        # Không log warning nữa - spam log
     
     def is_duplicate(self, text: str, image: np.ndarray, current_time: Optional[float] = None) -> Tuple[bool, str]:
         """Kiểm tra duplicate"""
@@ -94,7 +93,9 @@ class AdvancedDeduplicator:
             if text_similarity >= effective_threshold:
                 # Text rất giống - check image để xác nhận
                 # Nếu image cũng giống → duplicate (same scene, same text)
-                # Nếu image khác → NOT duplicate (different scene, similar text - có thể là repeated dialogue)
+                # Nếu image khác → check thêm để phân biệt:
+                #   - OCR variation (text_sim 0.85-0.95) → vẫn là duplicate
+                #   - Repeated dialogue (text_sim >= 0.98) → có thể là câu khác
                 
                 image_similarity = self._compute_image_similarity(image_hash, cached_image_hash)
                 
@@ -104,12 +105,27 @@ class AdvancedDeduplicator:
                     self.stats['duplicates_found'] += 1
                     return True, f"text_image_similar (text={text_similarity:.2f}, img={image_similarity:.2f})"
                 else:
-                    # Text giống nhưng image khác → KHÔNG duplicate
-                    # Đây là repeated dialogue ở scene khác
-                    log_debug(f"Same text different scene: '{text[:30]}...' (text_sim={text_similarity:.2f}, img_sim={image_similarity:.2f})")
-                    # Vẫn add vào cache để track
-                    self._add_to_cache(text, image, current_time)
-                    return False, f"repeated_dialogue_different_scene"
+                    # Text giống nhưng image khác
+                    # Phân biệt OCR variation vs repeated dialogue:
+                    
+                    # Nếu text_similarity > 0.95 → gần như giống hệt → OCR variation
+                    # → Vẫn coi là duplicate để tránh spam translation
+                    if text_similarity > 0.95:
+                        self.stats['duplicates_found'] += 1
+                        return True, f"ocr_variation (text={text_similarity:.2f}, img={image_similarity:.2f})"
+                    
+                    # Nếu text_similarity ở mức 0.85-0.95 và image rất khác (<0.5)
+                    # → Likely là repeated dialogue ở scene khác → KHÔNG duplicate
+                    if image_similarity < 0.5:
+                        # Không log - spam quá nhiều
+                        self._add_to_cache(text, image, current_time)
+                        return False, f"repeated_dialogue_different_scene"
+                    
+                    # Image similarity 0.5-0.75 và text similarity 0.85-0.95
+                    # → Có thể là animation/camera movement với cùng text
+                    # → Coi là duplicate để tránh spam
+                    self.stats['duplicates_found'] += 1
+                    return True, f"likely_same_dialogue (text={text_similarity:.2f}, img={image_similarity:.2f})"
         
         # Không match với cache nào - không phải duplicate
         self._add_to_cache(text, image, current_time)

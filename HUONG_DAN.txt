@@ -42,10 +42,11 @@ BƯỚC 2: Cấu hình cài đặt (Tab "Cài Đặt")
       - Nếu Tesseract không tự tìm thấy → Dùng nút "Duyệt" để chọn
    
    4. GAME MODE (Tối ưu cho game AAA với đồ họa phức tạp):
-      - BẬT (mặc định): Advanced preprocessing cho game có đồ họa phức tạp
-      - Tăng độ chính xác OCR 40-60% với game AAA graphics
-      - Trade-off: Chậm hơn 30-50ms mỗi frame
-      - Khuyến nghị: BẬT cho game modern, TẮT nếu cần tốc độ tuyệt đối
+      - BẬT (khuyến nghị): Preprocessing tối ưu cho game graphics
+      - Khi bật, có thêm option Fast Mode:
+        + Fast Mode BẬT (mặc định): phù hợp đa số game
+        + Fast Mode TẮT: chậm hơn nhưng ổn định hơn cho game có nền phức tạp
+      - Khuyến nghị: BẬT Game Mode + Fast Mode cho hầu hết game
    
    5. EASYOCR MODE (chỉ khi chọn EasyOCR):
       - CPU-only mode (tối ưu nhất cho real-time gaming)
@@ -109,9 +110,9 @@ BƯỚC 5: Sử dụng màn hình dịch
      - Multi-scale/Text Region: Tắt cho gaming (chỉ bật khi text rất nhỏ/mờ)
    
    • GAME MODE:
-     - BẬT (khuyến nghị): Cho game AAA modern với subtitle phức tạp, nền động
-     - TẮT: Game cũ/indie với text đơn giản, hoặc CPU yếu cần tốc độ tối đa
-     - Trade-off: +30-50ms nhưng tăng độ chính xác 40-60%
+     - BẬT + Fast Mode (khuyến nghị): Nhanh, phù hợp hầu hết game
+     - BẬT + TẮT Fast Mode: Cho game AAA với nền rất phức tạp (particles, effects)
+     - TẮT Game Mode: Game cũ/indie với text đơn giản, hoặc CPU yếu
    
    • DỊCH VỤ: 
      - Google Translate: Miễn phí, ổn định, nhanh

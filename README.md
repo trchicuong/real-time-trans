@@ -14,34 +14,16 @@ Tool Python mã nguồn mở dịch văn bản thời gian thực trên màn hì
 - ⚡ Tối ưu hiệu suất: Perceptual hashing, adaptive throttling, batch translation, CPU-only mode
 - ⌨️ Global Hotkeys: Phím tắt toàn cục tùy chỉnh (Windows/macOS/Linux)
 
-### 🆕 Cập nhật v1.3.1
+### 🆕 Cập nhật v1.3.5
 
-**Game Mode - Advanced Preprocessing for AAA Graphics**:
+**Performance & Stability Improvements**:
 
-- **Game Mode toggle**: Advanced preprocessing pipeline cho game AAA với đồ họa phức tạp
-  - **Color Text Extraction**: Trích xuất text màu (white/yellow/cyan) từ nền nhiễu qua HSV color space
-  - **Background Noise Detection**: Phát hiện nhiễu nền (particles, effects, animation) bằng FFT analysis
-  - **Adaptive Denoising**: Khử nhiễu thông minh khi noise_level > 40% (bilateral filter + NLM)
-  - **Stroke Width Transform**: Phát hiện text qua độ dày nét vẽ nhất quán (SWT algorithm)
-- **Hiệu quả**: Tăng 40-60% độ chính xác OCR cho game modern với nền động/phức tạp
-- **Trade-off**: +30-50ms overhead (balanced for accuracy)
-- **UI integration**: Checkbox trong tab Cài Đặt, mặc định BẬT
-- **Documentation**: Hướng dẫn chi tiết trong UI và HUONG_DAN.txt
-
-### 🆕 Cập nhật v1.3.0
-
-**Major Performance Optimization & Text Processing**:
-
-- **CPU-only mode**: EasyOCR forced CPU mode - better real-time performance than GPU for gaming
-- **Emotion markers support**: Preserves [action], **emotion**, (sound), ~ markers in game dialogues
-- **Smart text processing**: Fragment detection, em dash normalization, punctuation handling
-- **Advanced deduplication**: Hybrid text+image similarity with normalized comparison
-- **Removed MarianMT**: Simplified to Google Translate + DeepL only (faster, more reliable)
-- **Simplified cache**: Single in-memory dict cache (no disk I/O overhead)
-- **Immediate translation**: stable_threshold=1 (no warmup delay) - catches short dialogues
-- **Optimized throttling**: 0.15s intervals = 6-7 FPS (responsive for dialogue)
-- **Perceptual hashing**: imagehash library for better duplicate detection
-- **Text normalization**: Basic normalization in handlers, advanced in post-processing
+- **Game Mode Fast/Full**: 2 chế độ preprocessing cho game
+  - **Fast Mode (mặc định)**: CLAHE only - rất nhanh (~5-10ms), phù hợp đa số game
+  - **Full Mode**: Color extraction + Noise detection + Adaptive denoising - chậm hơn nhưng ổn định hơn cho game có nền phức tạp
+- **Thread Priority**: Worker threads chạy ở ABOVE_NORMAL priority để không bị OS suspend khi game fullscreen
+- **Code Cleanup**: Xóa dead code, fake CPU optimizations, unused variables
+- **Log Optimization**: Giảm spam logs trong error_log.txt và UI
 
 ## Yêu Cầu
 

@@ -49,7 +49,19 @@ class TextValidator:
         self.dialogue_interjections = {
             'oh', 'ah', 'uh', 'um', 'hmm', 'huh', 'hey', 'well',
             'so', 'but', 'and', 'or', 'no', 'yes', 'yeah', 'nah',
-            'wow', 'whoa', 'oops', 'ouch', 'yikes', 'damn', 'shit'
+            'wow', 'whoa', 'oops', 'ouch', 'yikes', 'damn', 'shit',
+            'hi', 'go', 'ok', 'me', 'we', 'he', 'it', 'is', 'as',
+            'at', 'on', 'in', 'to', 'do', 'be', 'my', 'up', 'an',
+        }
+        
+        # OCR garbage patterns - CHÍNH XÁC CÁC TỪ VÔ NGHĨA
+        # Thay vì dùng regex chung (dễ false positive), liệt kê cụ thể
+        self.ocr_garbage_words = {
+            'ned', 'ined', 'jined', 'ained', 'sist', 'inod',
+            'ded', 'aed', 'ued', 'oed', 'ied', 'eed',
+            'nod', 'jod', 'lod', 'iod',
+            'ned.', 'ined.', 'jined.', 'ained.',
+            'ded.', 'nod.', 'sist.',
         }
         
         # Minimum word count cho valid dialogue (1 word OK nếu là dialogue)
@@ -109,6 +121,12 @@ class TextValidator:
                 # Quá ít chữ cái -> không phải text thực
                 return False
             
+            # 1.5. Filter OCR garbage - text ngắn vô nghĩa
+            # Dùng danh sách cụ thể thay vì regex để tránh false positive
+            text_stripped = text.strip().lower()
+            if text_stripped in self.ocr_garbage_words:
+                return False  # OCR garbage, skip
+            
             # 2. Check dialogue patterns đặc biệt (stuttering, contractions, ellipsis)
             has_stutter = self.dialogue_stutter_pattern.search(text) is not None
             has_contraction = self.contraction_pattern.search(text) is not None
@@ -118,9 +136,7 @@ class TextValidator:
             
             # Nếu có dialogue patterns (bao gồm emotion markers), chắc chắn là dialogue hợp lệ
             if has_stutter or has_contraction or has_hyphenated or has_emotion_markers:
-                # Chỉ log patterns đặc biệt (không log hyphenated vì quá nhiều)
-                if has_stutter or has_emotion_markers:
-                    log_debug(f"Valid dialogue pattern detected: '{text[:50]}...'")
+                # Không log để tránh spam
                 return True
             
             # 3. Check interjections (oh, ah, uh, etc.)
@@ -268,11 +284,9 @@ class TextValidator:
                 return False
             
             if self.is_too_noisy_for_translation(text):
-                log_debug(f"Skipping noisy text: '{text[:50]}...'")
                 return False
             
             if not self.is_valid_dialogue_text(text):
-                log_debug(f"Skipping invalid dialogue: '{text[:50]}...'")
                 return False
             
             # Passed all checks

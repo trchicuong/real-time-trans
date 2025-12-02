@@ -24,24 +24,26 @@ except ImportError:
 class TesseractOCRHandler:
     """Handler cho Tesseract OCR với các kỹ thuật tối ưu"""
     
-    def __init__(self, source_language='eng', enable_multi_scale=False, enable_text_region_detection=False, enable_game_mode=True):
+    def __init__(self, source_language='eng', enable_multi_scale=False, enable_text_region_detection=False, enable_game_mode=False, game_mode_fast=True):
         """
         Args:
             source_language: Ngôn ngữ nguồn cho OCR
             enable_multi_scale: True = enable multi-scale processing (chính xác hơn nhưng chậm hơn)
             enable_text_region_detection: True = enable text region detection (tốn thời gian)
-            enable_game_mode: True = enable advanced game graphics processing (color extraction, noise detection, SWT)
+            enable_game_mode: True = enable advanced game graphics processing
+            game_mode_fast: True = fast mode (CLAHE only), False = full pipeline
         """
         self.source_language = source_language
         self.cached_prep_mode = None
         self.cached_tess_params = None
-        # Có thể bật/tắt từ UI
+        # Tất cả TẮT mặc định để tối ưu tốc độ
         self.enable_text_region_detection = enable_text_region_detection
         self.enable_multi_scale = enable_multi_scale
         self.enable_game_mode = enable_game_mode
+        self.game_mode_fast = game_mode_fast
         
-        # Advanced image processor cho game graphics
-        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode:
+        # Advanced image processor cho game graphics (chỉ khi không dùng fast mode)
+        if ADVANCED_PROCESSING_AVAILABLE and self.enable_game_mode and not self.game_mode_fast:
             try:
                 self.advanced_processor = AdvancedImageProcessor()
             except Exception as e:
@@ -60,12 +62,15 @@ class TesseractOCRHandler:
     def get_tesseract_config(self, mode='gaming'):
         """
         Lấy Tesseract config dựa trên mode
+        PSM modes:
+        - PSM 6: Assume a single uniform block of text (default, tốt cho dialogues)
+        - PSM 7: Treat the image as a single text line (tốt cho subtitle 1 dòng)
         """
         if mode == 'subtitle':
             return '--psm 7 --oem 3 -c preserve_interword_spaces=1'
         elif mode == 'gaming':
-            # Thêm emotion markers: [, ], (, ), *, ~ vào whitelist
-            return '--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;()[]{}*~-_\'"/<>\\$%&@+= '
+            # Gaming: PSM 6 cho dialogue boxes
+            return '--psm 6 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?\'":;()[]{}*~-_/<>\\$%&@+= '
         elif mode == 'document':
             return '--psm 3 --oem 3'
         else:
@@ -113,7 +118,22 @@ class TesseractOCRHandler:
         if img is None or img.size == 0:
             return np.zeros((10, 10), dtype=np.uint8)
         
-        # GAME MODE: Advanced preprocessing pipeline
+        # GAME MODE FAST: Chỉ CLAHE + threshold, rất nhanh (~10-30ms)
+        if self.enable_game_mode and self.game_mode_fast:
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img.copy()
+            
+            # CLAHE nhẹ để tăng contrast
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            
+            # Otsu threshold - nhanh và hiệu quả
+            _, processed = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            return processed
+        
+        # GAME MODE FULL: Advanced preprocessing pipeline (chậm hơn nhưng ổn định hơn)
         if self.enable_game_mode and self.advanced_processor:
             try:
                 # Full game graphics processing: color extraction + noise detection + adaptive denoising
@@ -443,7 +463,6 @@ class TesseractOCRHandler:
             
             # Validate ROI
             if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
-                log_debug(f"Empty ROI for region {region}")
                 return "", 0.0, 0
             
             # Adaptive confidence threshold dựa trên background complexity

@@ -33,6 +33,13 @@ GAME_OCR_FIXES = {
     ''': "'",
 }
 
+# Word suffixes ending with 'l' - OCR thường nhầm chữ l thành I hoa
+# Pattern: wordI → wordl (e.g., celestiaI → celestial, materiaI → material)
+SUFFIXES_ENDING_WITH_L = [
+    'ial', 'eal', 'ual', 'ral', 'nal', 'tal', 'cal', 'mal', 'gal', 'bal',
+    'dal', 'pal', 'sal', 'val', 'wal', 'all', 'ell', 'ill', 'oll', 'ull',
+]
+
 # Dialogue-specific patterns to preserve
 DIALOGUE_PATTERNS = {
     'stutter': re.compile(r'\b(\w+)[-\s]+\1\b', re.IGNORECASE),  # oh-oh, i'm-i'm
@@ -66,20 +73,60 @@ def post_process_ocr_text_general(text, lang='auto'):
         for error, correction in GAME_OCR_FIXES.items():
             cleaned = cleaned.replace(error, correction)
         
-        # Fix "l" at sentence start -> "I"
+        # === FIX "I" (hoa) cuối từ thành "l" (thường) ===
+        # Pattern: wordI → wordl (celestiaI → celestial, materiaI → material)
+        def fix_trailing_I(match):
+            word = match.group(0)
+            # Thử chuyển I cuối thành l
+            fixed = word[:-1] + 'l'
+            # Check xem suffix có trong danh sách không
+            for suffix in SUFFIXES_ENDING_WITH_L:
+                if fixed.lower().endswith(suffix):
+                    return fixed
+            return word  # Giữ nguyên nếu không match
+        
+        # Fix từ kết thúc bằng I hoa (nhưng không phải "I" đơn lẻ)
+        cleaned = re.sub(r'\b[A-Za-z]{2,}I\b', fix_trailing_I, cleaned)
+        
+        # Fix double I thành ll (alII → all, wiII → will)
+        cleaned = re.sub(r'\b([A-Za-z]+)II\b', lambda m: m.group(1) + 'll', cleaned)
+        
+        # === FIX "l" at sentence/clause start -> "I" ===
         cleaned = re.sub(r'^l\s', 'I ', cleaned)
         cleaned = re.sub(r'\.\s+l\s', '. I ', cleaned)
         cleaned = re.sub(r'!\s+l\s', '! I ', cleaned)
         cleaned = re.sub(r'\?\s+l\s', '? I ', cleaned)
-
-        # Fix "l" sau comma -> "I"
         cleaned = re.sub(r',\s+l\s', ', I ', cleaned)
+        
+        # === FIX TỪ DÍNH NHAU (stuck words) ===
+        # Pattern: Tookyou → Took you, areyou → are you
+        stuck_word_fixes = [
+            (r'\b([Tt])ookyou\b', r'\1ook you'),
+            (r'\b([Aa])reyou\b', r'\1re you'),
+            (r'\b([Dd])idyou\b', r'\1id you'),
+            (r'\b([Ww])hatyou\b', r'\1hat you'),
+            (r'\b([Ii])tsthe\b', r"It's the"),
+            (r'\b([Ii])fI\b', r'\1f I'),
+            (r'\b([Ii])fyou\b', r'\1f you'),
+            (r'\bspacingout\b', 'spacing out'),
+            (r'\bthoughtthis\b', 'thought this'),
+            (r'\b([Ii])truined\b', r'\1t ruined'),
+            (r'\btoalI\b', 'to all'),
+            (r'\btoall\b', 'to all'),
+        ]
+        for pattern, replacement in stuck_word_fixes:
+            cleaned = re.sub(pattern, replacement, cleaned)
+        
+        # KHÔNG dùng generic lowercase+uppercase pattern vì sẽ phá hỏng:
+        # McDonald → Mc Donald, iPhone → i Phone, YouTube → You Tube
+        # Thay vào đó, chỉ fix các stuck words cụ thể đã liệt kê ở trên
         
         # Fix common game words với l/I confusion
         # wilI -> will, alI -> all, etc.
         cleaned = re.sub(r'\b([Ww])il([I|l])\b', r'\1ill', cleaned)  # wilI -> will
         cleaned = re.sub(r'\bal([I|l])\b', 'all', cleaned, flags=re.IGNORECASE)  # alI -> all
         cleaned = re.sub(r'\bwi([I|l])([I|l])\b', 'will', cleaned, flags=re.IGNORECASE)  # wilI -> will
+        cleaned = re.sub(r'\bI([I|l])([I|l])\b', "I'll", cleaned)  # III → I'll
         
         ocr_errors = {
             '\u201E': '"',  # Double low-9 quotation mark

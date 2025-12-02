@@ -163,15 +163,12 @@ class DeepLContextManager:
                 normalized_new = self._normalize_for_dedup(source_text)
                 normalized_last = self._normalize_for_dedup(self.context_window[-1])
                 if normalized_new == normalized_last:
-                    log_debug("Skipping DeepL context update - duplicate source text (normalized)")
                     return
             
             self.context_window.append(source_text)
             
             # Keep only last 5 texts (more than max context setting for flexibility)
             self.context_window = self.context_window[-5:]
-            
-            log_debug(f"DeepL context updated. Window size: {len(self.context_window)}")
         except Exception as e:
             log_error("Error updating DeepL context", e)
     

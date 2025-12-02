@@ -120,9 +120,7 @@ def translate_batch_google(translator, sentences, max_retries=2):
                     if attempt == max_retries - 1:
                         log_error(f"Google Translate batch failed for sentence: {sentence[:50]}...", e)
                         translated_sentences.append("")
-                    else:
-                        import time
-                        time.sleep(0.1 * (attempt + 1))
+                    # Không sleep - retry ngay để nhanh hơn
         
         log_debug(f"Google Translate batch: {len(sentences)} sentences translated")
         return translated_sentences
